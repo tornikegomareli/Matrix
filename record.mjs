@@ -78,29 +78,31 @@ const SHIM = `(() => {
 })()`;
 
 const prof = path.join(dir, 'chrome-profile-' + process.pid);
-const dbg = 9300 + Math.floor(Math.random() * 400);
 const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', [
-  '--headless=new', `--remote-debugging-port=${dbg}`, `--user-data-dir=${prof}`, `--window-size=${W},${H}`, '--force-device-scale-factor=1',
+  '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${prof}`, `--window-size=${W},${H}`, '--force-device-scale-factor=1',
   '--mute-audio', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--enable-gpu', '--ignore-gpu-blocklist',
   '--use-angle=metal', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling',
   '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', 'about:blank',
 ], { stdio: 'ignore' });
 const cleanup = async () => { try { chrome.kill(); } catch (e) { /* gone */ } await sleep(500); try { fs.rmSync(prof, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }); } catch (e) { /* leftover profile */ } };
 
+// Chrome takes a free port and writes its number into its profile folder. A port chosen here could be the port of another Chrome,
+// and this script would then drive that one, or that one's script would drive this page
 let target = null;
 for (let i = 0; i < 80 && !target; i++) {
   await sleep(150);
-  try { target = (await (await fetch(`http://127.0.0.1:${dbg}/json`)).json()).find(t => t.type === 'page'); } catch (e) { /* not up yet */ }
+  try { const port = fs.readFileSync(path.join(prof, 'DevToolsActivePort'), 'utf8').split('\n')[0]; target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(t => t.type === 'page'); } catch (e) { /* not up yet */ }
 }
 if (!target) { console.log('CHROME_DID_NOT_START'); await cleanup(); process.exit(1); }
 
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise(r => ws.addEventListener('open', r));
-let id = 0; const pending = new Map(), logs = [];
+let id = 0, navs = 0; const pending = new Map(), logs = [];
 ws.addEventListener('message', ev => {
   const m = JSON.parse(ev.data);
   if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); return; }
   if (m.method === 'Runtime.consoleAPICalled') logs.push(`[${m.params.type}] ` + m.params.args.map(a => a.value ?? a.description ?? '').join(' '));
+  if (m.method === 'Page.frameNavigated' && !m.params.frame.parentId) navs++;
   if (m.method === 'Runtime.exceptionThrown') logs.push('[exception] ' + (m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text));
 });
 const send = (method, params = {}) => new Promise(r => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
@@ -131,11 +133,12 @@ let lead = 0;                                                     // run a tour 
 for (; lead < 2400 && !(await evalJs('__live()')); lead++) { await evalJs(`__step(${evAt(lead)})`); await evalJs('__audio()'); }
 await evalJs(`__lead(${lead})`);
 if (HOLD) { const pic = fs.readFileSync(first); for (let i = 0; i < HOLD; i++) if (!ff.stdin.write(pic)) await once(ff.stdin, 'drain'); }
-const t0 = Date.now(); let prevHash = '', dups = 0, lastStats = ''; const dupAt = [];
+const t0 = Date.now(), navs0 = navs; let prevHash = '', dups = 0, lastStats = ''; const dupAt = [];
 for (let k = 0; k < N; k++) {
   const stats = await evalJs(`__step(${evAt(k + lead)})`);
   const r = await send('Page.captureScreenshot', PREVIEW ? { format: fmt, quality: 82 } : { format: fmt, optimizeForSpeed: true });
   if (!r.result?.data) { console.log('SCREENSHOT_FAILED at frame', k, JSON.stringify(r.error || {})); break; }
+  if (navs !== navs0) { console.log('PAGE_RELOADED at frame', k, '- the recording is not complete'); ff.stdin.end(); await cleanup(); process.exit(1); }
   const buf = Buffer.from(r.result.data, 'base64'), h = crypto.createHash('md5').update(buf).digest('hex');
   if (h === prevHash) { dups++; dupAt.push(k); } prevHash = h;
   if (!ff.stdin.write(buf)) await once(ff.stdin, 'drain');
