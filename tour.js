@@ -596,7 +596,7 @@ vec2 person(vec3 p){
     head = -smin(-head, length(qs - vec3(0.031, 0.148, 0.09)) - 0.017, 0.012);                // the hollows of the eyes
     head = min(head, sdEll(qs, vec3(0.078, 0.13, 0.0), vec3(0.011, 0.028, 0.018)));           // ears
     head = smin(head, sdCap(p, vec3(0.0, 1.44, -0.012), vec3(0.0, 1.575, 0.0), 0.046), 0.02); // neck
-    if (head < d) m = q.y > 0.172 + 0.6 * q.z ? 3.0 : 1.0;                                    // hair above the line of the brow and the ears
+    if (head < d) m = q.y > 0.172 + (q.z < 0.0 ? 1.15 : 0.6) * q.z ? 3.0 : 1.0;               // hair above the line of the brow and the ears, and down to the nape
     d = smin(d, head, 0.015);
     if (cook > 0.5) {                                                                         // the cook: a tall cap, and a cigarette
       float cap = smin(max(length(q.xz - vec2(0.0, -0.005)) - 0.092, abs(q.y - 0.24) - 0.04), sdEll(q, vec3(0.0, 0.335, -0.008), vec3(0.118, 0.075, 0.118)), 0.03);
