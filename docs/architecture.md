@@ -1,5 +1,16 @@
 # Architecture
 
+## Technology
+
+- **Vite** for the development server and the build. The code is plain JavaScript modules, with no framework.
+- **Three.js r160** from npm, on **WebGL2**. Three.js supplies the renderer, the math and the buffers. Every material is a hand-written GLSL shader.
+- **Instanced rendering.** The city is boxes, cylinders and quads drawn in a few hundred draw calls.
+- **Ray-marched volumetric clouds** at half resolution, smoothed over time.
+- **An HDR pipeline:** planar reflection, bloom, motion blur, ACES tone mapping and a film grade.
+- **Web Audio** for sound. The script loops, filters, pans and mixes recordings. It generates no sound.
+- **Deterministic generation.** A 32 bit seed decides every building.
+- **No server code.** The built site is static files: 5 MB, of which the music is 3.8 MB.
+
 ## Layout
 
 `index.html` has the markup of the interface: statistics, the switches, a hint line, touch controls and the intro text.
@@ -100,3 +111,5 @@ Each of those fragment shaders reads the scene depth texture and discards itself
 It caps the picture at 2.3 million pixels (1.0 million on touch devices) and at a device pixel ratio of 2.
 The address parameter `pixels` sets another cap, in millions. `?pixels=8.3` lets a recording render 3840×2160 in full.
 If the frame rate stays below 48 for 1.5 seconds, the page multiplies the size by 0.85. The floor is 55%.
+
+The page was developed and measured on an Apple M4 Max, where it holds 60 FPS at 1920×1080. Only Chrome on that machine was tested.

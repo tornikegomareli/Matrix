@@ -3,6 +3,25 @@
 The camera is the flyer. There is no body in the picture.
 Two functions can move it each frame: `stepManual` (you fly) and `stepCine` (the page flies).
 
+## Keys
+
+| Key | Action |
+|---|---|
+| `W` `A` `S` `D` | Move |
+| Mouse (click first) | Look |
+| `Space` | Launch upward |
+| `Shift` | Boost |
+| `Q` / `E` | Down / up |
+| `F` | Bullet time |
+| `G` | Recompile the city |
+| `C` | Cinematic flight on or off |
+| `R` | New seed |
+| `H` | Hide the interface |
+| `1` `2` `3` `4` | Rain, traffic, glitches, amount of code |
+| `5` `6` | All sound, music |
+
+On a touch screen there is a stick, a boost button, a time button and a cinematic button.
+
 ## Manual flight
 
 Manual flight is a small physical model. Speed has to be built and is lost again.
