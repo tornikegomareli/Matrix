@@ -855,7 +855,7 @@ void main(){
     };
     const endGlass = () => { if (wrecked) { cellW.vents.splice(cellW.vents.indexOf(VENT), 1); steamDirty = true; } scene.remove(shMesh); shGeo.dispose(); geoTri.dispose(); matSh.dispose(); };
 
-    // ── sound. Recordings beside the page, in tour-snd/. They are fetched when the audio runs. A missing file is a silent one ──
+    // ── sound. Recordings beside the page, in sounds/tour/. They are fetched when the audio runs. A missing file is a silent one ──
     const SND = ['tick', 'horn', 'cat', 'lighter', 'glass', 'crash', 'crowd', 'powerdown', 'rewind', 'vo1', 'vo2'];
     let sndOn = false, bus = null, amb = null, musG = null, lim = null, crowdG = null, crowdS = null, lastLvl = -1, nextTick = 18, tickN = 0;
     const tmpV = new V(), prevU = [1, 1]; let cut = false;
@@ -872,7 +872,7 @@ void main(){
       lim = AC.createWaveShaper(); const cv = new Float32Array(2049);                                       // a ceiling for the sum: straight up to 0.8, then it bends, and nothing leaves above full scale
       for (let i = 0; i < 2049; i++) { const y = (i / 1024 - 1) * 2, m = Math.abs(y); cv[i] = Math.sign(y) * (m <= 0.8 ? m : 0.8 + 0.19 * Math.tanh((m - 0.8) / 0.19)); }
       lim.curve = cv; AU.nodes.out.disconnect(); aChain(AU.nodes.out, aGain(0.5), lim, AC.destination);
-      for (const n of SND) fetch('tour-snd/' + n + '.mp3', { cache: 'no-store' }).then(r => r.ok ? r.arrayBuffer() : Promise.reject()).then(b => AC.decodeAudioData(b)).then(b => {
+      for (const n of SND) fetch('sounds/tour/' + n + '.mp3', { cache: 'no-store' }).then(r => r.ok ? r.arrayBuffer() : Promise.reject()).then(b => AC.decodeAudioData(b)).then(b => {
         AU.buf['t_' + n] = b;
         if (n === 'glass' || n === 'crash') AU.buf['t_' + n + 'R'] = reversed(b);
       }).catch(() => {});
@@ -984,7 +984,7 @@ void main(){
       show(card, t >= 42.3 ? 'WAKE UP' : '4 minutes earlier.', t >= 42.3 ? smooth(42.3, 42.5, t) : smooth(2.3, 2.5, t) * (1 - smooth(3.05, 3.2, t)));
       card.style.letterSpacing = t >= 42 ? '.35em' : '.04em';
       show(sub, t < 12 ? 'Funny thing about this city. Every night, it’s exactly the same.' : 'I counted. This is night four hundred and twelve.',
-        AU.buf.t_vo1 ? 0 : t < 12 ? smooth(5.2, 5.5, t) * (1 - smooth(9.3, 9.6, t)) : smooth(16.75, 16.95, t) * (1 - smooth(18.0, 18.3, t)));   // with tour-snd/vo1.mp3 and vo2.mp3 the voice speaks them
+        AU.buf.t_vo1 ? 0 : t < 12 ? smooth(5.2, 5.5, t) * (1 - smooth(9.3, 9.6, t)) : smooth(16.75, 16.95, t) * (1 - smooth(18.0, 18.3, t)));   // with sounds/tour/vo1.mp3 and vo2.mp3 the voice speaks them
       if (t >= 42 && !black._on) { black._on = true; black.style.display = 'block'; }   // the cut: black
     };
 
