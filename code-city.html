@@ -1482,7 +1482,7 @@ function updateWave(dt) {
     if (idle && far.dual) { wave.phase = 'run'; wave.front = camU - reach; wave.passed = false; waveSound(reach / wave.speed); }
   } else if (wave.phase === 'run') {
     wave.front += wave.speed * dt;
-    if (!wave.passed && wave.front > camU) { wave.passed = true; fx.scan = 0.8; fx.tear = 0.6; fx.ca = 0.008; chirp(8); }
+    if (!wave.passed && wave.front > camU) { wave.passed = true; chirp(8); }
     if (wave.front > camU + reach + 500) {
       wave.phase = 'post'; wave.front = 1e12; wave.on = false; EPOCH++;
       for (const ch of chunks.values()) rebuildQ.push(ch);
@@ -1666,13 +1666,11 @@ void main(){
 }`, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uGain: { value: 0.9 } },
   { blending: THREE.AdditiveBlending, transparent: true });
 
-// composite: distortion, motion blur, bloom, speed lines, ACES, green grade, trails
+// composite: motion blur, bloom, ACES, green grade, trails
 const matComp = postMat(/* glsl */`
 uniform sampler2D tScene, tBloom, tPrev, tDepth;
 uniform vec2 uRes, uRot, uNF;
-uniform float uAspect, uTime, uBoost, uSpeedN, uShock, uTrail, uExposure, uBloom;
-float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
+uniform float uAspect, uTime, uSpeedN, uTrail, uExposure, uBloom;
 vec3 aces(vec3 x){ return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 // the look of the film's scenes inside the Matrix: the picture is real, but everything leans to a sick green.
 // Mid tones and highlights go green, reds and blues lose their richness, shadows go deep and green-black.
@@ -1686,17 +1684,10 @@ vec3 grade(vec3 c){
   return max(c, 0.0);
 }
 void main(){
-  vec2 uv = vUv, c = uv - 0.5, ca = vec2(c.x * uAspect, c.y), dir = normalize(c + 1e-5);
-  float r = length(ca), ring = 0.0;
-  if (uShock < 1.0) {                                                     // sonic boom: a refracting ring runs outward
-    float w = r - uShock * 1.3;
-    ring = exp(-w * w * 260.0) * (1.0 - uShock);
-    uv -= dir * ring * 0.07 * sin(w * 55.0);
-  }
-  float ang = atan(ca.y, ca.x);
-  uv += dir * (vn(vec2(ang * 6.0, uTime * 9.0)) - 0.5) * 0.014 * uBoost * smoothstep(0.2, 0.75, r);   // air distortion
+  vec2 uv = vUv, c = uv - 0.5;
+  float r = length(vec2(c.x * uAspect, c.y));
   float zs = texture2D(tDepth, uv).r, sd = uNF.x * uNF.y / (uNF.y - zs * (uNF.y - uNF.x));
-  vec2 mv = c * (0.11 * uSpeedN * (0.25 + r)) * mix(0.1, 1.0, clamp(110.0 / sd, 0.0, 1.0)) + uRot;   // zoom blur from speed, for near things only, + pan blur from turning
+  vec2 mv = c * (0.11 * uSpeedN * (0.25 + r)) * clamp(110.0 / sd, 0.0, 1.0) + uRot;   // zoom blur from speed: near things streak, far things and the sky hold still. Plus pan blur from turning
   vec3 col;
   if (length(mv * uRes) > 1.5) {
     float j = h21(gl_FragCoord.xy + fract(uTime) * 37.0);
@@ -1706,20 +1697,12 @@ void main(){
   } else col = texture2D(tScene, uv).rgb;
   col = clamp(col, 0.0, 64.0);
   col += texture2D(tBloom, uv).rgb * uBloom;
-  if (uBoost > 0.01) {                                                    // radial speed lines
-    float k = ang * 19.1, seg = floor(k), rnd = h21(vec2(seg, 3.0));
-    float tt = uTime * (2.2 + rnd * 3.5) + rnd * 10.0, rr = r * 1.1 - tt;
-    float on = step(0.55, h21(vec2(seg, floor(rr))));
-    float line = pow(fract(rr), 7.0) * on * (1.0 - smoothstep(0.0, 0.5, abs(fract(k) - 0.5) * (2.0 + 7.0 * rnd)));
-    col += vec3(0.80, 0.90, 1.0) * line * uBoost * smoothstep(0.2, 0.75, r) * 1.6;
-  }
-  col += vec3(0.80, 0.90, 1.0) * ring * 0.45;
   col = grade(aces(col * uExposure));
   col = max(col, texture2D(tPrev, vUv).rgb * uTrail);                     // bullet-time trails
   gl_FragColor = vec4(col, 1.0);
 }`, {
   tScene: { value: null }, tBloom: { value: null }, tPrev: { value: null }, tDepth: U.tDepth, uNF: U.uNF, uRes: { value: new THREE.Vector2() }, uRot: { value: new THREE.Vector2() },
-  uAspect: { value: 1 }, uTime: { value: 0 }, uBoost: { value: 0 }, uSpeedN: { value: 0 }, uShock: { value: 1 }, uTrail: { value: 0 },
+  uAspect: { value: 1 }, uTime: { value: 0 }, uSpeedN: { value: 0 }, uTrail: { value: 0 },
   uExposure: { value: 1.5 }, uBloom: { value: 0.34 },
 });
 
@@ -1903,7 +1886,7 @@ function renderScene() {
 // ───────────────────────── player state + input ─────────────────────────
 const P = {
   pos: new THREE.Vector3(0, 120, 50), vel: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0,
-  boost: 0, slow: 0, yawRate: 0, pitchRate: 0, speed: 0, shock: 1, boomArmed: true, shake: 0,
+  boost: 0, slow: 0, yawRate: 0, pitchRate: 0, speed: 0, boomArmed: true, shake: 0,
 };
 const keys = {};
 const touch = { fx: 0, fy: 0, boost: false, slow: false };
@@ -2509,13 +2492,12 @@ function frame(now) {
   if (cineOn) stepCine(cdt, rdt); else stepManual(cdt, rdt);
   const vs = cineOn ? 1 : cdt / rdt;
   P.speed = P.vel.length();
-  if (P.boomArmed && P.speed > MACH * 0.92) { P.boomArmed = false; P.shock = 0; sonicBoom(); }
+  if (P.boomArmed && P.speed > MACH * 0.92) { P.boomArmed = false; sonicBoom(); }
   if (P.speed < MACH * 0.6) P.boomArmed = true;
-  P.shock = Math.min(1, P.shock + rdt / 0.9);
   const fovT = 72 + 42 * P.boost * smooth(0.12, 0.9, P.speed / MACH) - 7 * P.slow;
   if (Math.abs(fovT - camera.fov) > 0.02) { camera.fov = damp(camera.fov, fovT, 5, rdt); camera.updateProjectionMatrix(); }
   P.shake = Math.max(0, P.shake - rdt * 1.8);
-  const mch = P.speed / MACH, shk = 0.0012 * P.boost + 0.004 * P.boost * Math.exp(-Math.pow((mch - 0.95) / 0.07, 2)) + 0.0025 * U.uCloud.value * Math.min(1, mch * 3) + 0.03 * P.shake * P.shake;
+  const shk = 0.03 * P.shake * P.shake;                           // a hit shakes the camera; flight itself is smooth
   if (shk > 1e-5) {
     camera.rotateX(shk * (Math.sin(realT * 47.1) + Math.sin(realT * 83.3 + 1.3)));
     camera.rotateY(shk * (Math.sin(realT * 53.7 + 2.1) + Math.sin(realT * 71.9)));
@@ -2548,8 +2530,8 @@ function frame(now) {
   matRain.uniforms.uRainT.value = rainT; matRain.uniforms.uRainScale.value = lerp(1, 0.012, P.slow);
   matGround.uniforms.uCenter.value.set(Math.round(px / CELL) * CELL, Math.round(pz / CELL) * CELL);
   const cu = matComp.uniforms, sn = Math.min(1.7, P.speed * vs / MACH), hf = camera.fov * Math.PI / 180;
-  cu.uTime.value = realT; cu.uBoost.value = P.boost * smooth(0.25, 0.9, sn); cu.uSpeedN.value = sn * smooth(0.05, 0.35, sn);
-  cu.uShock.value = P.shock; cu.uTrail.value = 0.55 * P.slow;
+  cu.uTime.value = realT; cu.uSpeedN.value = sn * smooth(0.05, 0.35, sn);
+  cu.uTrail.value = 0.55 * P.slow;
   cu.uRot.value.set(clamp(P.yawRate * rdt * 0.5 / (hf * camera.aspect), -0.05, 0.05), clamp(-P.pitchRate * rdt * 0.5 / hf, -0.05, 0.05));
   fu.uScan.value = fx.scan; fu.uTear.value = fx.tear; fu.uCA.value = fx.ca + 0.004 * P.boost + 0.0015 * P.slow;
   fade = started ? Math.min(1, fade + rdt / 2.4) : 0; fu.uFade.value = fade * fade * (3 - 2 * fade);
