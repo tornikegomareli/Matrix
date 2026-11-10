@@ -78,10 +78,10 @@ The page has a few variables and uniforms that only a tour sets. A scene that se
 
 `?tour=loop` is one scene. It adds things to the world that the city does not have, and removes them when it ends.
 
-- **A set.** A doorway cut into a tower, a corridor, a stairwell to the roof, a hatch, lamps, and a footbridge over the avenue. It is 2,000 boxes with a material of their own.
+- **A set.** A doorway cut into a tower, a corridor, a stairwell to the roof, a hatch, lamps, and a footbridge over the avenue. It is about 3,000 boxes with a material of their own. Most of them are the steps of the stairwell.
 - **Figures.** A cook, people in a corridor and a cat. Each is a box whose fragment shader marches a ray through a figure made of rounded shapes, and writes its own depth.
 - **Loops.** The cook lights a cigarette every 3.2 seconds. The cat trots the same 5 metres every 2.4 seconds. Both exist twice: in the alley and on the roof. A car sounds its horn twice, the same way each time.
-- **Glass.** The glass wall of the footbridge is 900 triangles. Each has a path that is a function of the world clock: in place before it broke, then a throw, a fall, and rest on the street.
+- **Glass.** The glass wall of the footbridge is about 900 triangles. Each has a path that is a function of the world clock: in place before it broke, then a throw, a fall, and rest on the street.
 - **A crash.** Two cars meet at a crossing. Their places are functions of the world clock too.
 
 The film runs the world clock forward, holds it twice (the two frozen frames), runs it back fast (the rewind), and runs it backwards for 8 seconds.
