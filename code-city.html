@@ -910,7 +910,7 @@ void main(){
 // ───────────────────────── traffic: car bodies + headlights, taillights, beams on the road ─────────────────────────
 const CAR_COMMON = /* glsl */`
 attribute vec4 iCar;            // x, z, heading index (0 +x, 1 -x, 2 +z, 3 -z; or 8 + an angle), seed
-attribute float iCarS;          // brake amount
+attribute float iCarS;          // brake amount, 0..1. 2: a wreck, with no light at all
 vec2 carFwd(float d){ return d > 7.5 ? vec2(cos(d - 8.0), sin(d - 8.0)) : d < 0.5 ? vec2(1.0, 0.0) : d < 1.5 ? vec2(-1.0, 0.0) : d < 2.5 ? vec2(0.0, 1.0) : vec2(0.0, -1.0); }   // 8 + an angle: any heading
 `;
 const CAR_VS = FOLD_V + CAR_COMMON + /* glsl */`
@@ -956,14 +956,14 @@ void main(){
     float size = max(head > 0.5 ? 0.7 + 1.2 * vis : 0.7, length(mv.xyz) * 0.002);
     mv.xy += position.xy * size * vec2(head > 0.5 ? 1.7 : 1.0, 1.0);
     gl_Position = projectionMatrix * mv;
-    vCol = (head > 0.5 ? vec3(1.0, 0.96, 0.88) * (0.4 + 3.4 * vis) : vec3(1.0, 0.12, 0.06) * (0.5 + 1.8 * iCarS) * (0.25 + 0.75 * vis)) * att;
+    vCol = (head > 0.5 ? vec3(1.0, 0.96, 0.88) * (0.4 + 3.4 * vis) : vec3(1.0, 0.12, 0.06) * (0.5 + 1.8 * iCarS) * (0.25 + 0.75 * vis)) * att * step(iCarS, 1.5);
     vKind = 0.0;
   } else {
     float t = position.y * 0.5 + 0.5;
     vec3 wp = base + F * (head > 0.5 ? mix(1.8, 32.0, t) : mix(-2.2, -9.0, t)) + R * position.x * (head > 0.5 ? 2.2 + 2.6 * t : 1.5);
     wp.y = 0.05; wp = foldP(wp, iCar.y, th);
     gl_Position = uMirror < 0.0 ? vec4(2.0, 2.0, 2.0, 1.0) : projectionMatrix * viewMatrix * vec4(wp, 1.0);
-    vCol = (head > 0.5 ? vec3(1.0, 0.94, 0.82) * 0.5 : vec3(1.0, 0.12, 0.06) * 0.14 * (0.5 + 1.5 * iCarS)) * att;
+    vCol = (head > 0.5 ? vec3(1.0, 0.94, 0.82) * 0.5 : vec3(1.0, 0.12, 0.06) * 0.14 * (0.5 + 1.5 * iCarS)) * att * step(iCarS, 1.5);
     vKind = 1.0;
   }
   vUv = position.xy;
@@ -1638,7 +1638,7 @@ function collide(pos, vel, r) {
 
 // ───────────────────────── traffic: cars follow lanes, keep gaps, stop at red signals ─────────────────────────
 const CAR_RANGE = 440, STOP_AT = 20.3;       // stop line + half a car, measured from the intersection centre
-const cars = [], extraCars = [];                  // extraCars: up to CAR_EXTRA scripted cars { x, z, a: heading angle, seed, brake }, drawn with the traffic
+const cars = [], extraCars = [];                  // extraCars: up to CAR_EXTRA scripted cars { x, z, a: heading angle, seed, brake (2: no lights) }, drawn with the traffic
 let trafficRnd = mulberry32(SEED ^ 0xCA75);
 function spawnCar(c, px, pz, vx, vz, initial) {
   const r = trafficRnd;
