@@ -1697,7 +1697,7 @@ void main(){
 }`, {
   tScene: { value: null }, tBloom: { value: null }, tPrev: { value: null }, tDepth: U.tDepth, uNF: U.uNF, uRes: { value: new THREE.Vector2() }, uRot: { value: new THREE.Vector2() },
   uAspect: { value: 1 }, uTime: { value: 0 }, uSpeedN: { value: 0 }, uTrail: { value: 0 },
-  uExposure: { value: 1.5 }, uBloom: { value: 0.34 },
+  uExposure: { value: 1.3 }, uBloom: { value: 0.34 },
 });
 
 // the clouds: a ray march through the layer at half size, stopped by the scene depth. rgb = light gathered, a = what still shows through
@@ -1784,7 +1784,7 @@ void main(){
   col *= 1.0 - (0.05 + 0.4 * uScan) * (0.5 + 0.5 * sin(gl_FragCoord.y * 2.0944));
   col += vec3(0.05, 0.35, 0.12) * uScan * (1.0 - smoothstep(0.0, 0.04, abs(fract(uv.y * 1.3 - uTime * 0.9) - 0.5)));
   col *= 1.0 + uScan * (h21(vec2(floor(uTime * 60.0), 7.0)) - 0.5) * 0.5;
-  col *= (1.0 - smoothstep(0.22, 0.92, sqrt(r2))) * 0.6 + 0.4;                     // vignette
+  col *= (1.0 - smoothstep(0.22, 0.92, sqrt(r2))) * 0.66 + 0.34;                   // vignette
   col = pow(max(col, 0.0), vec3(1.0 / 2.2));
   float g = h21(floor(gl_FragCoord.xy / 1.5) + fract(uTime) * 91.7) - 0.5;
   col += g * 0.055 * (1.2 - col.g);                                        // film grain, stronger in the shadows
@@ -2379,7 +2379,7 @@ function updateFx(rdt) {
   }
   fx.flashT += rdt; fx.nextFlash -= rdt * lerp(1, 0.15, P.slow);
   if (fx.nextFlash <= 0 && started) {
-    fx.nextFlash = (U.uCloud.value > 0.5 ? 2.2 : 6) + Math.random() * 8; fx.flashT = 0; fx.flashAmp = 1.0 + Math.random() * 1.2;
+    fx.nextFlash = (U.uCloud.value > 0.5 ? 2 : 3.5) + Math.random() * 6; fx.flashT = 0; fx.flashAmp = 1.0 + Math.random() * 1.2;
     const hitAt = P.pos.y < CLOUD_Y - 80 && Math.random() < 0.6 ? pickStrike() : null;
     const a = Math.random() * TAU, fd = 500 + Math.random() * 2600;
     let lx = P.pos.x + Math.cos(a) * fd, ly = CLOUD_Y, lz = P.pos.z + Math.sin(a) * fd;
