@@ -1,6 +1,7 @@
 // Frame-exact recorder: steps the page on a virtual 60 Hz clock in headless Chrome, screenshots every frame,
 // renders the page's Web Audio through an OfflineAudioContext in lockstep, and encodes both with ffmpeg.
-// usage: node record.mjs <url> <out.mp4> <seconds> [W] [H] ['<keys json: [{t,type,code}]>'] [crf] [maxrate in Mbit/s]
+// usage: node record.mjs <url> <out.mp4> <seconds> [W] [H] ['<keys json: [{t,type,code}]>'] [crf] [maxrate in Mbit/s] [first picture.png]
+// The first picture is a PNG of the size of the video. It is put in front of the recording for a quarter of a second, so it is the first frame.
 // A tour is recorded from its first picture: the frames before it (the wait for a key, a scene that is made ready behind black) are left out.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,10 +9,11 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 
-const [url, out, secs, W = '1920', H = '1080', keysJson = '[]', crf = '15', rate = '24'] = process.argv.slice(2);
+const [url, out, secs, W = '1920', H = '1080', keysJson = '[]', crf = '15', rate = '24', first = ''] = process.argv.slice(2);
 const FPS = 60, N = Math.round(+secs * FPS), keys = JSON.parse(keysJson), PREVIEW = +W < 1000;
 const dir = path.dirname(out), base = out.replace(/\.mp4$/, '');
 const FADE = 0.6;
+const HOLD = first ? 15 : 0, LEN = +secs + HOLD / FPS;             // frames the first picture is held, and the length of the video with it
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const SHIM = `(() => {
@@ -119,7 +121,7 @@ await evalJs('document.fonts.ready.then(() => 1)');
 
 const fmt = PREVIEW ? 'jpeg' : 'png';
 const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(FPS), '-c:v', PREVIEW ? 'mjpeg' : 'png', '-i', '-',
-  '-vf', `scale=in_range=pc:out_range=tv:out_color_matrix=bt709,format=yuv420p,fade=t=out:st=${+secs - FADE}:d=${FADE}`,
+  '-vf', `scale=in_range=pc:out_range=tv:out_color_matrix=bt709,format=yuv420p,fade=t=out:st=${LEN - FADE}:d=${FADE}`,
   '-c:v', 'libx264', '-preset', PREVIEW ? 'veryfast' : 'slow', '-crf', PREVIEW ? '23' : crf, ...(PREVIEW ? [] : ['-maxrate', rate + 'M', '-bufsize', 2 * rate + 'M']),
   '-profile:v', 'high', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv', '-an', base + '.video.mp4'],
   { stdio: ['pipe', 'inherit', 'inherit'] });
@@ -128,6 +130,7 @@ const evAt = k => JSON.stringify(keys.filter(e => Math.round(e.t * FPS) === k));
 let lead = 0;                                                     // run a tour to its first picture; these frames are not recorded
 for (; lead < 2400 && !(await evalJs('__live()')); lead++) { await evalJs(`__step(${evAt(lead)})`); await evalJs('__audio()'); }
 await evalJs(`__lead(${lead})`);
+if (HOLD) { const pic = fs.readFileSync(first); for (let i = 0; i < HOLD; i++) if (!ff.stdin.write(pic)) await once(ff.stdin, 'drain'); }
 const t0 = Date.now(); let prevHash = '', dups = 0, lastStats = ''; const dupAt = [];
 for (let k = 0; k < N; k++) {
   const stats = await evalJs(`__step(${evAt(k + lead)})`);
@@ -142,14 +145,14 @@ for (let k = 0; k < N; k++) {
 ff.stdin.end(); await once(ff, 'close');
 const [b64len, peak] = await evalJs('__audio()');
 let b64 = ''; for (let a = 0; a < b64len; a += 1 << 20) b64 += await evalJs(`__pcm.slice(${a}, ${a + (1 << 20)})`);
-fs.writeFileSync(base + '.pcm', Buffer.from(b64, 'base64'));
+fs.writeFileSync(base + '.pcm', Buffer.concat([Buffer.alloc(Math.round(HOLD / FPS * 48000) * 4), Buffer.from(b64, 'base64')]));   // silence under the first picture
 console.log('duplicates after 5 s:', dupAt.filter(k => k > 300).length, 'last duplicate frame:', dupAt.at(-1));
 console.log(`frames=${N} framesBefore=${lead} duplicateFrames=${dups} audioPeak=${peak.toFixed(3)} captureSeconds=${((Date.now() - t0) / 1000).toFixed(0)}`);
 console.log('LOGS (' + logs.length + '):'); for (const l of logs.slice(0, 30)) console.log('  ' + l.slice(0, 600));
 ws.close(); await cleanup();
 
 const mux = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-i', base + '.video.mp4', '-f', 's16le', '-ar', '48000', '-ac', '2', '-i', base + '.pcm',
-  '-c:v', 'copy', '-af', `afade=t=out:st=${+secs - FADE}:d=${FADE}`, '-c:a', 'aac', '-b:a', '256k', '-shortest', '-movflags', '+faststart', out], { stdio: 'inherit' });
+  '-c:v', 'copy', '-af', `afade=t=out:st=${LEN - FADE}:d=${FADE}`, '-c:a', 'aac', '-b:a', '256k', '-shortest', '-movflags', '+faststart', out], { stdio: 'inherit' });
 await once(mux, 'close');
 console.log('WROTE', out, fs.statSync(out).size);
 process.exit(0);
