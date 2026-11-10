@@ -1729,11 +1729,15 @@ uniform float uAspect, uTime, uBoost, uSpeedN, uShock, uTrail, uExposure, uBloom
 float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
 vec3 aces(vec3 x){ return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+// the look of the film's scenes inside the Matrix: the picture is real, but everything leans to a sick green.
+// Mid tones and highlights go green, reds and blues lose their richness, shadows go deep and green-black.
 vec3 grade(vec3 c){
   float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  c = mix(vec3(l), c, 1.1);                                               // a little more colour
-  c *= mix(vec3(0.86, 1.03, 0.90), vec3(1.0), smoothstep(0.15, 0.85, l)); // the film's green cast lives in the shadows
-  c = mix(c, c * c * (3.0 - 2.0 * c), 0.3);                               // contrast
+  c = mix(vec3(l), c, 0.42);
+  c *= mix(vec3(0.46, 1.0, 0.78), vec3(0.64, 1.07, 0.64), smoothstep(0.0, 0.4, l));   // teal-green in the shadows, yellow-green in the mid tones
+  c = mix(c, c * c * (3.0 - 2.0 * c), 0.45);
+  c += vec3(0.0, 0.010, 0.005) * (1.0 - smoothstep(0.0, 0.25, l));
+  c = mix(c, vec3(0.80, 1.0, 0.82) * max(max(c.r, c.g), c.b), smoothstep(0.55, 1.0, l) * 0.75);   // highlights burn to a pale green
   return max(c, 0.0);
 }
 void main(){
