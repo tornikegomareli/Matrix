@@ -73,6 +73,7 @@ const CEIL = 3200;                                // flight ceiling
 const FAR_R = 44, FAR_SNAP = 8;                   // far-field radius and re-centre step, in cells
 const SPIRE_GRID = 18;                            // one landmark spire at most per 18 x 18 cells
 let EPOCH = 0;                                    // generation of the city; a recompile wave moves it forward
+const setEpoch = v => { EPOCH = v; };
 const TAU = Math.PI * 2;
 
 const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -116,6 +117,23 @@ function vnoise(x, z, salt) {
   const a = hash01(s, xi, zi), b = hash01(s, xi + 1, zi), c = hash01(s, xi, zi + 1), d = hash01(s, xi + 1, zi + 1);
   return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
 }
+const setSeed = v => { SEED = v; };
+
+// ───────────────────────── state that more than one part reads and writes ─────────────────────────
+const clock = { world: 0, rain: 0, real: 0, rate: 1 };            // seconds. rate is the pace of the world: 1 runs, 0 holds still, below 0 runs backwards
+// started: the picture is on. fade: how far it has faded in. quality: the share of the pixels that are drawn.
+// fovAdd: degrees a tour adds to the lens angle, below 0 is a longer lens. fogAlt: a height to take the fog from, in place of the height of the camera
+const view = { started: false, fade: 0, quality: 1, fovAdd: 0, fogAlt: null };
+const P = {
+  pos: new THREE.Vector3(0, 120, 50), vel: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0,
+  boost: 0, slow: 0, yawRate: 0, pitchRate: 0, speed: 0, boomArmed: true, shake: 0,
+};
+const keys = {};
+const touch = { fx: 0, fy: 0, boost: false, slow: false };
+const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyQ', 'KeyE', 'ShiftLeft', 'ShiftRight'];
+const cine = { pts: [], i: 1, u: 0, v: 60, rnd: null, step: 0, f: new THREE.Vector3(0, 0, -1), right: new THREE.Vector3(1, 0, 0), roll: 0, head: 0, pan: 0, yaw0: 0, y0: 0, on: false, move: null };   // on: cinematic flight. move: the function that moves the camera in it
+const build = { on: false, r: 0, speed: 0, auto: false };   // the city while it builds itself outward from a point
+const nearest = { train: 1e9, pan: 0 };                           // the train that is nearest to the camera: metres, and the side it is on
 
 // ───────────────────────── glyph atlas (8x8, mirrored like the film) ─────────────────────────
 function makeGlyphAtlas(maxAniso) {
@@ -1090,7 +1108,7 @@ function cloudAt(x, y, z) {
     const at = (a, b) => coverData[((((vi + b) % COVER_N) + COVER_N) % COVER_N * COVER_N + (((ui + a) % COVER_N) + COVER_N) % COVER_N) * 2 + c] / 255;
     return lerp(lerp(at(0, 0), at(1, 0), fu), lerp(at(0, 1), at(1, 1), fu), fv);
   };
-  const wx = x + worldT * 9, wz = z + worldT * 3.5, cov = smooth(0.22, 0.70, map(wx / 16000, wz / 16000, 0)), deck = lerp(150, 310, map(wx / 16000, wz / 16000, 1));
+  const wx = x + clock.world * 9, wz = z + clock.world * 3.5, cov = smooth(0.22, 0.70, map(wx / 16000, wz / 16000, 0)), deck = lerp(150, 310, map(wx / 16000, wz / 16000, 1));
   const tw = smooth(0.55, 0.80, map(wx / 5300 + 0.37, wz / 5300 + 0.37, 1)) * cov, top = deck + 950 * tw, inT = tw * smooth(deck * 0.7, deck * 1.5, yy);
   const prof = smooth(0, 18, yy) * (1 - smooth(top * lerp(0.35, 0.5, tw), top, yy)), need = lerp((1 - cov) * 0.9 + 0.08, 0.5, inT);
   return clamp((0.72 * prof - need) * 4, 0, 1);                 // the 3D noise is taken as a middle value
@@ -1420,6 +1438,7 @@ const BOX_LAYOUT = [['iPos', 3], ['iSize', 3], ['iPar', 4], ['iBld', 3]];
 const chunks = new Map(), chunkPool = [], buildQueue = [], rebuildQ = [];
 const chunkKey = cellKey;
 let lastCx = 1e9, lastCz = 1e9, steamDirty = true;
+const steamChanged = () => { steamDirty = true; };   // a part that adds or removes a vent says so
 const nearStable = [1, 1, 0, 0];
 
 // The city fold (see foldP in the shaders): the world beyond the line z = hinge bends up and over. angle runs from 0 to PI
@@ -1568,14 +1587,13 @@ function updateFar(px, pz) {
 function resetCity() {
   for (const ch of chunks.values()) releaseChunk(ch);
   chunks.clear(); cellCache.clear(); lotCache.clear(); lastCx = lastCz = 1e9; buildQueue.length = rebuildQ.length = 0;
-  EPOCH = 0; wave.on = false; wave.phase = ''; U.uWave.value.w = 0;
+  setEpoch(0); wave.on = false; wave.phase = ''; U.uWave.value.w = 0;
   far.cx = far.cz = 1e9; far.job = null; farGeo.instanceCount = 0;
 }
 
 // Recompile wave. prep: every chunk and the far field are rebuilt with both epochs. run: the front crosses the city.
 // post: the epoch moves forward and everything is rebuilt with the new one only.
 // the world builds itself outward from a point: frames rise, snap to solid, then their lights come on
-const build = { on: false, r: 0, speed: 0, auto: false };
 function startBuild(x, z, speed) { build.on = true; build.r = 0; build.speed = speed; U.uBuild.value.set(x, z, 0, 1); }
 function updateBuild(dt) {
   if (!build.on) return;
@@ -1583,7 +1601,7 @@ function updateBuild(dt) {
   if (build.r > 7000) { build.on = false; U.uBuild.value.w = 0; }
 }
 function startWave() {
-  if (wave.phase || !started) return;
+  if (wave.phase || !view.started) return;
   const fwd = camera.getWorldDirection(_t); let dx = -fwd.x, dz = -fwd.z; const l = Math.hypot(dx, dz);
   if (l < 0.25) { const a = Math.random() * TAU; dx = Math.cos(a); dz = Math.sin(a); } else { dx /= l; dz /= l; }   // it comes toward the viewer
   wave.on = true; wave.phase = 'prep'; wave.dx = dx; wave.dz = dz; wave.front = -1e12;
@@ -1600,7 +1618,7 @@ function updateWave(dt) {
     wave.front += wave.speed * dt;
     if (!wave.passed && wave.front > camU) { wave.passed = true; chirp(8); }
     if (wave.front > camU + reach + 500) {
-      wave.phase = 'post'; wave.front = 1e12; wave.on = false; EPOCH++;
+      wave.phase = 'post'; wave.front = 1e12; wave.on = false; setEpoch(EPOCH + 1);
       for (const ch of chunks.values()) rebuildQ.push(ch);
       far.dirty = true;
     }
@@ -1704,7 +1722,8 @@ function updateTraffic(dt, time, px, pz, vx, vz) {
 const RIB_CAP = 640, TRAIN_CAP = 640;
 const ribGeo = instGeo(geoStreak, RIB_CAP, [['iA', 3], ['iB', 3], ['iW', 4]]), ribMesh = addMesh(ribGeo, matRib, 13);
 const trainGeo = instGeo(geoBox, TRAIN_CAP, BOX_LAYOUT), trainMesh = addMesh(trainGeo, matBox);
-let ribN = 0, nearTrain = 1e9, nearTrainPan = 0;
+let ribN = 0;
+const resetRibs = () => { ribN = 0; };                       // every frame draws its ribbons anew
 function rib(ax, ay, az, bx, by, bz, w0, w1, it, type) {
   if (ribN >= RIB_CAP) return;
   const A = ribGeo.attributes.iA.array, B = ribGeo.attributes.iB.array, W = ribGeo.attributes.iW.array, i = ribN++;
@@ -1713,7 +1732,7 @@ function rib(ax, ay, az, bx, by, bz, w0, w1, it, type) {
 }
 const TRAIN_GAP = 760, TRAIN_V = 36, TRAIN_CARS = 4;
 function updateTrains(time, px, py, pz) {
-  const reach = Math.min(U.uFogFar.value, 2400), rows = far.rows; rows.length = 0; nearTrain = 1e9;
+  const reach = Math.min(U.uFogFar.value, 2400), rows = far.rows; rows.length = 0; nearest.train = 1e9;
   for (let axis = 0; axis < 2; axis++) {
     const camL = axis ? px : pz, camU = axis ? pz : px;
     for (let line = Math.ceil((camL - reach) / CELL); line * CELL <= camL + reach; line++) {
@@ -1728,7 +1747,7 @@ function updateTrains(time, px, py, pz) {
         const tail = head - dir * TRAIN_CARS * 21, end = tail - dir * 130;      // the streak of light it leaves behind
         if (axis) rib(lat, y + 1.9, tail, lat, y + 1.9, end, 2.4, 0.5, 0.9, 2); else rib(tail, y + 1.9, lat, end, y + 1.9, lat, 2.4, 0.5, 0.9, 2);
         const mid = head - dir * 42, dx = (axis ? lat : mid) - px, dz = (axis ? mid : lat) - pz, d = Math.hypot(dx, y - py, dz);
-        if (d < nearTrain) { nearTrain = d; nearTrainPan = dx * Math.cos(P.yaw) - dz * Math.sin(P.yaw); }
+        if (d < nearest.train) { nearest.train = d; nearest.pan = dx * Math.cos(P.yaw) - dz * Math.sin(P.yaw); }
       }
     }
   }
@@ -1964,12 +1983,11 @@ function buildTargets(w, h) {
   matComp.uniforms.uRes.value.set(w, h); matComp.uniforms.uAspect.value = w / h;
   for (const t of rtAcc) { renderer.setRenderTarget(t); renderer.clear(); }
 }
-let quality = 1;
 const PIXELS = (+new URLSearchParams(location.search).get('pixels') || (IS_TOUCH ? 1.0 : 2.3)) * 1e6;   // the most pixels the page renders. ?pixels=8.3 lets a recording render 3840×2160 in full
 function resize() {
   const cw = Math.max(1, innerWidth), ch = Math.max(1, innerHeight), dpr = Math.min(devicePixelRatio || 1, 2);
   const cap = Math.min(1, Math.sqrt(PIXELS / (cw * dpr * ch * dpr)));   // pixel budget
-  const w = Math.max(64, Math.round(cw * dpr * cap * quality)), h = Math.max(64, Math.round(ch * dpr * cap * quality));
+  const w = Math.max(64, Math.round(cw * dpr * cap * view.quality)), h = Math.max(64, Math.round(ch * dpr * cap * view.quality));
   renderer.setPixelRatio(1); renderer.setSize(w, h, false);
   camera.aspect = cw / ch; camera.updateProjectionMatrix();
   buildTargets(w, h);
@@ -2039,24 +2057,16 @@ function renderScene() {
   runPass(matFinal, null);
 }
 
-// ───────────────────────── player state + input ─────────────────────────
-const P = {
-  pos: new THREE.Vector3(0, 120, 50), vel: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0,
-  boost: 0, slow: 0, yawRate: 0, pitchRate: 0, speed: 0, boomArmed: true, shake: 0,
-};
-const keys = {};
-const touch = { fx: 0, fy: 0, boost: false, slow: false };
-let cineOn = false;
-const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyQ', 'KeyE', 'ShiftLeft', 'ShiftRight'];
+// ───────────────────────── input ─────────────────────────
 
 addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (MOVE_KEYS.includes(e.code) || e.code === 'KeyF') e.preventDefault();
   if (e.repeat) return;
   keys[e.code] = true;
-  if (cineOn && MOVE_KEYS.includes(e.code)) setCine(false);
-  if (e.code === 'Space' && !cineOn) P.vel.y += 26;             // launch kick
-  if (e.code === 'KeyC') setCine(!cineOn);
+  if (cine.on && MOVE_KEYS.includes(e.code)) setCine(false);
+  if (e.code === 'Space' && !cine.on) P.vel.y += 26;             // launch kick
+  if (e.code === 'KeyC') setCine(!cine.on);
   else if (e.code === 'KeyH') $('ui').classList.toggle('hidden');
   else if (e.code === 'KeyR') newSeed();
   else if (e.code === 'KeyG') startWave();
@@ -2077,7 +2087,7 @@ canvas.addEventListener('click', () => {
   if (lock && lock.catch) lock.catch(() => {});                  // rejects if Esc was pressed a moment ago
 });
 document.addEventListener('mousemove', e => {
-  if (document.pointerLockElement !== canvas || cineOn) return;
+  if (document.pointerLockElement !== canvas || cine.on) return;
   P.yaw -= e.movementX * 0.0021; P.pitch = clamp(P.pitch - e.movementY * 0.0021, -1.54, 1.54);
 });
 // touch: left stick moves, dragging anywhere else looks around
@@ -2088,13 +2098,13 @@ document.addEventListener('mousemove', e => {
     const l = Math.hypot(dx, dy); if (l > 1) { dx /= l; dy /= l; }
     touch.fx = dx; touch.fy = -dy; knob.style.transform = `translate(${dx * 37}px,${dy * 37}px)`;
   };
-  stick.addEventListener('pointerdown', e => { sid = e.pointerId; stick.setPointerCapture(sid); setStick(e); startAudio(); if (cineOn) setCine(false); });
+  stick.addEventListener('pointerdown', e => { sid = e.pointerId; stick.setPointerCapture(sid); setStick(e); startAudio(); if (cine.on) setCine(false); });
   stick.addEventListener('pointermove', e => { if (e.pointerId === sid) setStick(e); });
   const endStick = e => { if (e.pointerId === sid) { sid = -1; touch.fx = touch.fy = 0; knob.style.transform = ''; } };
   stick.addEventListener('pointerup', endStick); stick.addEventListener('pointercancel', endStick);
   canvas.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse' && lid < 0) { lid = e.pointerId; lx = e.clientX; ly = e.clientY; } });
   canvas.addEventListener('pointermove', e => {
-    if (e.pointerId !== lid || cineOn) return;
+    if (e.pointerId !== lid || cine.on) return;
     P.yaw -= (e.clientX - lx) * 0.005; P.pitch = clamp(P.pitch - (e.clientY - ly) * 0.005, -1.54, 1.54); lx = e.clientX; ly = e.clientY;
   });
   const endLook = e => { if (e.pointerId === lid) lid = -1; };
@@ -2105,7 +2115,7 @@ document.addEventListener('mousemove', e => {
     for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, () => { touch[key] = false; });
   };
   hold('bBoost', 'boost'); hold('bTime', 'slow');
-  $('bCine').addEventListener('click', () => { startAudio(); setCine(!cineOn); });
+  $('bCine').addEventListener('click', () => { startAudio(); setCine(!cine.on); });
 }
 
 // ───────────────────────── manual flight ─────────────────────────
@@ -2147,14 +2157,13 @@ function stepManual(dt, rdt) {
   P.yawRate = damp(P.yawRate, yr, 10, rdt); P.pitchRate = damp(P.pitchRate, pr, 10, rdt);
   P.roll = damp(P.roll, clamp(Math.atan(-latAcc / 42) + P.yawRate * 0.05, -0.85, 0.85), 5, rdt);
   camera.position.copy(P.pos);
-  camera.position.y += Math.sin(realT * 1.25) * 0.14 * (1 - Math.min(1, sp2 / 14));     // idle hover: a slow bob
+  camera.position.y += Math.sin(clock.real * 1.25) * 0.14 * (1 - Math.min(1, sp2 / 14));     // idle hover: a slow bob
   camera.rotation.set(P.pitch, P.yaw, P.roll, 'YXZ');
 }
 P._yaw0 = 0; P._pitch0 = 0;
 
 // ───────────────────────── cinematic flight: a spline that stays over the road grid ─────────────────────────
 // The air above every road is always free, so a path made of road-line waypoints cannot hit a building.
-const cine = { pts: [], i: 1, u: 0, v: 60, rnd: null, step: 0, f: new THREE.Vector3(0, 0, -1), right: new THREE.Vector3(1, 0, 0), roll: 0, head: 0, pan: 0, yaw0: 0, y0: 0 };
 const pl = { axis: 0, dir: 1, line: 0, s: 0, y: 100, wv: 1 };     // planner cursor: which road and where along it
 const cPush = (x, y, z, v, b, w) => cine.pts.push({ x, y, z, v, b: b || 0, w: w || 0 });
 const plPush = (lat, v, b, w) => pl.axis === 0 ? cPush(pl.s, pl.y, pl.line * CELL + lat, v, b, w) : cPush(pl.line * CELL + lat, pl.y, pl.s, v, b, w);
@@ -2286,6 +2295,7 @@ function cineAhead(dist, out) {                                   // a point `di
 }
 const _p = new THREE.Vector3(), _q = new THREE.Vector3(), _t = new THREE.Vector3(), _up = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _qr = new THREE.Quaternion(), Z_AXIS = new THREE.Vector3(0, 0, 1), WORLD_UP = new THREE.Vector3(0, 1, 0);
+cine.move = stepCine;                             // what moves the camera in cinematic flight. A tour puts its own function here
 function stepCine(dt, rdt) {
   if (cine.pan > 0) {                                             // first look around: a slow sweep while rising above the street. It ends on the heading of the route
     cine.pan = Math.max(0, cine.pan - rdt / 13);
@@ -2338,8 +2348,8 @@ function stepCine(dt, rdt) {
   camera.position.copy(_p);
 }
 function setCine(on, look) {
-  if (on === cineOn) return;
-  cineOn = on; cine.pan = 0;
+  if (on === cine.on) return;
+  cine.on = on; cine.pan = 0;
   if (on && look) { cine.pan = 1; cine.yaw0 = P.yaw; cine.y0 = P.pos.y; }
   else if (on) startCine(); else { P._yaw0 = P.yaw; P._pitch0 = P.pitch; }
 }
@@ -2433,7 +2443,7 @@ function updateAudio(rdt) {
   if (!AC) return;
   const N = AU.nodes, alt = P.pos.y, sn = clamp(P.speed / MACH, 0, 1.6), below = 1 - U.uAbove.value, inC = U.uCloud.value, rainOn = S.rain ? 1 : 0, rainK = U.uRainK.value;
   const street = 1 - smooth(5, 70, alt), world = build.on ? smooth(300, 1500, build.r) : 1;     // no city yet, no city sound
-  const gust = 0.85 + 0.15 * Math.sin(realT * 0.31) * Math.sin(realT * 0.173 + 1);
+  const gust = 0.85 + 0.15 * Math.sin(clock.real * 0.31) * Math.sin(clock.real * 0.173 + 1);
   aSet(N.rain.gain, rainOn * rainK * 1.5 * (1 - 0.5 * inC) * gust);
   aSet(N.rainLP.frequency, lerp(11000, 4500, smooth(60, 600, alt)), 0.3);                       // high above the street the rain is a duller wash
   aSet(N.close.gain, rainOn * rainK * lerp(0.1, 1.1, street) * (1 - inC) * gust);
@@ -2446,8 +2456,8 @@ function updateAudio(rdt) {
   aSet(thBus.frequency, Math.min(lerp(16000, 320, U.uAbove.value), lerp(16000, 420, P.slow)), 0.3);   // thunder from above the clouds is a dull thud
   aSet(N.music.gain, S.music ? MUSIC * (0.6 + 0.4 * rainOn * rainK) : 0, 0.4);                    // lower where the weather is quiet
   if (AU.mus && AC.currentTime > AU.mus.end - 6) playMusic();
-  const tk = clamp(1 - nearTrain / 260, 0, 1);
-  aSet(N.train.gain, tk * tk * 4.5 * below, 0.1); aSet(N.trainPan.pan, clamp(nearTrainPan / 60, -1, 1), 0.1);
+  const tk = clamp(1 - nearest.train / 260, 0, 1);
+  aSet(N.train.gain, tk * tk * 4.5 * below, 0.1); aSet(N.trainPan.pan, clamp(nearest.pan / 60, -1, 1), 0.1);
 }
 // thunder: recorded strikes. Sound takes time to arrive, and distance takes the crack away and leaves the roll.
 function thunder(dist, amp, panX, strike) {
@@ -2551,12 +2561,12 @@ function updateFx(rdt) {
     u.set(g.x, g.z, smooth(0, 0.3, k) * (1 - smooth(0.68, 1, k)), 0);
   }
   fx.scan = Math.max(0, fx.scan - rdt * 2.2); fx.tear = Math.max(0, fx.tear - rdt * 2.6); fx.ca = Math.max(0, fx.ca - rdt * 0.05);
-  if (S.glitch > 0 && started) {
+  if (S.glitch > 0 && view.started) {
     fx.nextGlitch -= rdt;
     if (fx.nextGlitch <= 0) { triggerGlitch(fx.force); fx.force = null; fx.nextGlitch = GLITCH_GAP[S.glitch] * (0.6 + Math.random() * 0.8); }
   }
   fx.flashT += rdt; fx.nextFlash -= rdt * lerp(1, 0.15, P.slow);
-  if (fx.nextFlash <= 0 && started) {
+  if (fx.nextFlash <= 0 && view.started) {
     const sky = P.pos.y > CLOUD_Y + 100;                          // among the clouds: the flashes are near, inside the towers, and come more often
     fx.nextFlash = (sky ? 3 : 3.5) + Math.random() * (sky ? 5 : 6); fx.flashT = 0; fx.flashAmp = 1.0 + Math.random() * 1.2;
     const hitAt = P.pos.y < CLOUD_Y - 80 && Math.random() < 0.6 ? pickStrike() : null;
@@ -2580,7 +2590,7 @@ function updateFx(rdt) {
       rib(b.x, b.y - 1.5, b.z, b.x, b.y + 3.5, b.z, 7, 7, it * 0.8, 1);                 // the mast flares where it is hit
     }
   }
-  if (S.glitch > 0 && started && !cineOn) {                       // now and then the city recompiles by itself
+  if (S.glitch > 0 && view.started && !cine.on) {                       // now and then the city recompiles by itself
     fx.nextWave -= rdt;
     if (fx.nextWave <= 0) { fx.nextWave = GLITCH_GAP[S.glitch] * (7 + Math.random() * 6); startWave(); }
   }
@@ -2620,46 +2630,42 @@ function placeStart() {
   camera.position.copy(P.pos); camera.rotation.set(0, P.yaw, 0, 'YXZ');
 }
 function newSeed() {
-  SEED = (Math.random() * 4294967296) >>> 0;
+  setSeed((Math.random() * 4294967296) >>> 0);
   try { history.replaceState(null, '', '#seed=' + seedHex()); } catch (e) { /* file:// in some browsers */ }
   resetCity(); placeStart(); resetTraffic(P.pos.x, P.pos.z); startBuild(P.pos.x, P.pos.z, 420);
   fx.slots[0] = fx.slots[1] = null; fx.scan = 1; fx.tear = 1; fx.ca = 0.008; chirp(6);
-  if (cineOn) { cine.pan = 0; startCine(); }
+  if (cine.on) { cine.pan = 0; startCine(); }
 }
 
 // ───────────────────────── intro ─────────────────────────
-let started = false, fade = 0;
 (async () => {
   const wait = ms => new Promise(r => setTimeout(r, ms)), el = $('typed');
   await wait(900);
   for (const ch of 'Wake up now...') { el.textContent += ch; await wait(90 + Math.random() * 110); }
   await wait(1300);
   $('intro').classList.add('gone');
-  started = true; fx.nextGlitch = 2.8; fx.force = 'dissolve';
+  view.started = true; fx.nextGlitch = 2.8; fx.force = 'dissolve';
   setTimeout(() => { if (build.auto) { build.auto = false; build.speed = 420; } }, 700);   // the city builds itself as the picture fades in
   if (!MOVE_KEYS.some(k => keys[k])) setCine(true, true);        // already flying by hand: leave the controls alone
   setTimeout(() => $('hint').classList.add('fade'), 5000);
 })();
 
 // ───────────────────────── main loop ─────────────────────────
-let timeRate = 1;                                 // the pace of the world: 1 runs, 0 holds still, below 0 runs backwards
-let fovAdd = 0;                                   // degrees a tour adds to the lens angle: below 0 is a longer lens
-let fogAlt = null;                                // a height to take the fog from, in place of the height of the camera
-let last = performance.now(), worldT = 0, rainT = 0, realT = 0, fpsT = last, fpsN = 0, fps = 60, lowN = 0;
+let last = performance.now(), fpsT = last, fpsN = 0, fps = 60, lowN = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const rdt = clamp((now - last) / 1000, 0.001, 0.05); last = now;
-  realT += rdt; fpsN++;
+  clock.real += rdt; fpsN++;
   if (now - fpsT >= 500) {
     fps = fpsN * 1000 / (now - fpsT); fpsT = now; fpsN = 0;
     $('stats').textContent = `FPS ${fps.toFixed(0)}\nSEED ${seedHex()}\nMACH ${(P.speed / MACH).toFixed(2)}`
-      + (cineOn ? '\nCINEMATIC' : '') + (P.slow > 0.5 ? '\nBULLET TIME' : '');
+      + (cine.on ? '\nCINEMATIC' : '') + (P.slow > 0.5 ? '\nBULLET TIME' : '');
     // hold 60 FPS: if the frame rate stays low, render fewer pixels
-    if (started && realT > 8 && !document.hidden && fps < 48) { if (++lowN >= 3 && quality > 0.56) { quality = Math.max(0.55, quality * 0.85); lowN = 0; resize(); } }
+    if (view.started && clock.real > 8 && !document.hidden && fps < 48) { if (++lowN >= 3 && view.quality > 0.56) { view.quality = Math.max(0.55, view.quality * 0.85); lowN = 0; resize(); } }
     else lowN = 0;
   }
   const fu = matFinal.uniforms;
-  fu.uTime.value = realT;
+  fu.uTime.value = clock.real;
   if (replay.left > 0) {                                          // deja vu: the world holds still while stored frames run again
     fu.uScan.value = 0.55; fu.uCA.value = 0.006; fu.uTear.value = 0;
     renderScene();
@@ -2667,55 +2673,55 @@ function frame(now) {
     return;
   }
   P.slow = damp(P.slow, (keys.KeyF || touch.slow) ? 1 : 0, 7, rdt);
-  const dt = rdt * lerp(1, 0.1, P.slow) * timeRate, cdt = rdt * lerp(1, cineOn ? 0.22 : 0.4, P.slow);   // world at 10%, the flyer keeps some pace
-  worldT += dt; rainT += rdt * lerp(1, 0.012, P.slow) * timeRate;            // rain all but freezes
-  if (cineOn) stepCine(cdt, rdt); else stepManual(cdt, rdt);
-  const vs = cineOn ? 1 : cdt / rdt;
+  const dt = rdt * lerp(1, 0.1, P.slow) * clock.rate, cdt = rdt * lerp(1, cine.on ? 0.22 : 0.4, P.slow);   // world at 10%, the flyer keeps some pace
+  clock.world += dt; clock.rain += rdt * lerp(1, 0.012, P.slow) * clock.rate;            // rain all but freezes
+  if (cine.on) cine.move(cdt, rdt); else stepManual(cdt, rdt);
+  const vs = cine.on ? 1 : cdt / rdt;
   P.speed = P.vel.length();
   if (P.boomArmed && P.speed > MACH * 0.92) { P.boomArmed = false; sonicBoom(); }
   if (P.speed < MACH * 0.6) P.boomArmed = true;
-  const fovT = 72 + 42 * P.boost * smooth(0.12, 0.9, P.speed / MACH) - 7 * P.slow + fovAdd;
+  const fovT = 72 + 42 * P.boost * smooth(0.12, 0.9, P.speed / MACH) - 7 * P.slow + view.fovAdd;
   if (Math.abs(fovT - camera.fov) > 0.02) { camera.fov = damp(camera.fov, fovT, 5, rdt); camera.updateProjectionMatrix(); }
   P.shake = Math.max(0, P.shake - rdt * 1.8);
   const shk = 0.03 * P.shake * P.shake;                           // a hit shakes the camera; flight itself is smooth
   if (shk > 1e-5) {
-    camera.rotateX(shk * (Math.sin(realT * 47.1) + Math.sin(realT * 83.3 + 1.3)));
-    camera.rotateY(shk * (Math.sin(realT * 53.7 + 2.1) + Math.sin(realT * 71.9)));
-    camera.rotateZ(shk * 0.6 * Math.sin(realT * 39.3 + 0.7));
+    camera.rotateX(shk * (Math.sin(clock.real * 47.1) + Math.sin(clock.real * 83.3 + 1.3)));
+    camera.rotateY(shk * (Math.sin(clock.real * 53.7 + 2.1) + Math.sin(clock.real * 71.9)));
+    camera.rotateZ(shk * 0.6 * Math.sin(clock.real * 39.3 + 0.7));
   }
   camera.updateMatrixWorld();
 
   const px = P.pos.x, pz = P.pos.z;
-  updateChunks(px, pz, started ? 4 : 400);
+  updateChunks(px, pz, view.started ? 4 : 400);
   updateFar(px, pz);
-  updateTraffic(dt, worldT, px, pz, P.vel.x, P.vel.z);
+  updateTraffic(dt, clock.world, px, pz, P.vel.x, P.vel.z);
   updateWave(dt); updateBuild(dt);
-  ribN = 0;
-  if (build.on && build.r < 2500) { trainGeo.instanceCount = 0; nearTrain = 1e9; }           // trains and beams wait until the city stands
-  else { updateTrains(worldT, px, P.pos.y, pz); updateBeams(worldT); }
+  resetRibs();
+  if (build.on && build.r < 2500) { trainGeo.instanceCount = 0; nearest.train = 1e9; }           // trains and beams wait until the city stands
+  else { updateTrains(clock.world, px, P.pos.y, pz); updateBeams(clock.world); }
   updateFx(rdt);
   ribGeo.instanceCount = ribN;
   for (const k in ribGeo.attributes) if (ribGeo.attributes[k].isInstancedBufferAttribute) ribGeo.attributes[k].needsUpdate = true;
 
-  U.uTime.value = worldT; U.uRTime.value = realT; U.uBoost.value = P.boost; U.uSlow.value = Math.max(P.slow, 1 - Math.min(1, Math.abs(timeRate)));   // a world that holds still hangs its drops like bullet time
+  U.uTime.value = clock.world; U.uRTime.value = clock.real; U.uBoost.value = P.boost; U.uSlow.value = Math.max(P.slow, 1 - Math.min(1, Math.abs(clock.rate)));   // a world that holds still hangs its drops like bullet time
   U.uCamVel.value.copy(P.vel).multiplyScalar(vs);
   const alt = P.pos.y;
   U.uCloud.value = damp(U.uCloud.value, cloudAt(P.pos.x, alt, P.pos.z), 5, rdt);          // how deep in cloud the camera is
   U.uAbove.value = smooth(CLOUD_Y + 60, DECK_TOP - 40, alt);
   U.uRainK.value = (1 - smooth(CLOUD_Y - 70, CLOUD_Y + 20, alt)) * (build.on ? smooth(500, 1500, build.r) : 1);   // rain falls from the cloud base, once there is a city to fall on
-  const fa = fogAlt === null ? alt : fogAlt;
+  const fa = view.fogAlt === null ? alt : view.fogAlt;
   U.uFogFar.value = lerp(FOG_FAR, 3900, smooth(140, 900, fa)); U.uFogDen.value = lerp(0.0009, 0.00013, smooth(100, 1100, fa));
   const near = lerp(0.5, 10, smooth(800, 1600, alt));
   if (Math.abs(near - camera.near) > 0.01) { camera.near = near; camera.updateProjectionMatrix(); }
   U.uNF.value.set(camera.near, camera.far);
-  matRain.uniforms.uRainT.value = rainT; matRain.uniforms.uRainScale.value = lerp(1, 0.012, P.slow) * timeRate;
+  matRain.uniforms.uRainT.value = clock.rain; matRain.uniforms.uRainScale.value = lerp(1, 0.012, P.slow) * clock.rate;
   matGround.uniforms.uCenter.value.set(Math.round(px / CELL) * CELL, Math.round(pz / CELL) * CELL);
   const cu = matComp.uniforms, sn = Math.min(1.7, P.speed * vs / MACH), hf = camera.fov * Math.PI / 180;
-  cu.uTime.value = realT; cu.uSpeedN.value = sn * smooth(0.05, 0.35, sn);
+  cu.uTime.value = clock.real; cu.uSpeedN.value = sn * smooth(0.05, 0.35, sn);
   cu.uTrail.value = 0.55 * P.slow;
   cu.uRot.value.set(clamp(P.yawRate * rdt * 0.25 / (hf * camera.aspect), -0.05, 0.05), clamp(-P.pitchRate * rdt * 0.25 / hf, -0.05, 0.05));
   fu.uScan.value = fx.scan; fu.uTear.value = fx.tear; fu.uCA.value = fx.ca + 0.0012 * P.boost + 0.0015 * P.slow;
-  fade = started ? Math.min(1, fade + rdt / 2.4) : 0; fu.uFade.value = fade * fade * (3 - 2 * fade);
+  view.fade = view.started ? Math.min(1, view.fade + rdt / 2.4) : 0; fu.uFade.value = view.fade * view.fade * (3 - 2 * view.fade);
   renderScene();
   updateAudio(rdt);
 }

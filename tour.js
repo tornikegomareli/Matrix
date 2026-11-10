@@ -14,7 +14,7 @@
   if (!list) { console.warn('tour: there is no tour named ' + D.scene); return; }
   if (seedHex() !== 'C0DEC17E') { location.hash = 'seed=C0DEC17E'; location.reload(); return; }
   const M = [0.4082, 0.4082, -0.8165];                              // moon direction (from the sky shader)
-  const pageStep = stepCine, keep = { glitch: S.glitch };
+  const pageStep = cine.move, keep = { glitch: S.glitch };
   const W0 = { film: 55, city: 0, train: 100, wave: 200, sky: 1090, loop: 300, poster: 300 };   // the world clock at the start of each scene
 
   // ── overlays ──
@@ -165,7 +165,7 @@
     train() {
       standing();
       const line = 2, x0 = line * CELL, ry = railY(1, line), dir = hash01(SEED ^ 0x77A1, 1, line) < 0.5 ? 1 : -1;
-      const off = hash01(SEED ^ 0x77A2, 1, line) * 760, head = t => off + dir * 36 * (worldT + t + 0.9);   // head of train k = 0 at tour time t (the scene starts at -0.9)
+      const off = hash01(SEED ^ 0x77A2, 1, line) * 760, head = t => off + dir * 36 * (clock.world + t + 0.9);   // head of train k = 0 at tour time t (the scene starts at -0.9)
       const k = Math.round((-380 - head(3.5)) / 760), hz = t => k * 760 + head(t);
       const pos = [], look = [];
       for (let t = -3; t <= 9.01; t += 1) {
@@ -246,12 +246,12 @@
   };
   const enter = i => {                                              // start scene i of the list
     if (sc && sc.end) sc.end();
-    li = i; worldT = W0[list[i][0]]; sc = scenes[list[i][0]]();
+    li = i; clock.world = W0[list[i][0]]; sc = scenes[list[i][0]]();
     SEGS = Array.isArray(sc.pos[0][0]) ? sc.pos : [sc.pos]; K = SEGS[0]; segI = 0;
     sc.ev.sort((a, b) => a[0] - b[0]);
     st.t = sc.t0 !== undefined ? sc.t0 : -0.9; st.n = 0; st.evi = 0;
     evalPos(st.t, P.pos); camera.position.copy(P.pos); P.vel.set(0, 0, 0); resetTraffic(P.pos.x, P.pos.z);
-    if (i > 0) started = false;                                    // load the whole neighbourhood at once, behind the black
+    if (i > 0) view.started = false;                                    // load the whole neighbourhood at once, behind the black
   };
   const onKey = e => {                                              // the page's keys rest while a tour runs
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -261,8 +261,8 @@
   const finish = () => {                                            // hand the camera back to the page's own cinematic flight
     if (done) return; done = true;
     if (sc.end) sc.end();
-    stepCine = pageStep; removeEventListener('keydown', onKey, true); keys.KeyF = false; cine.pan = 0;
-    S.glitch = keep.glitch; refreshUI(); fx.nextFlash = 5; started = true;
+    cine.move = pageStep; removeEventListener('keydown', onKey, true); keys.KeyF = false; cine.pan = 0;
+    S.glitch = keep.glitch; refreshUI(); fx.nextFlash = 5; view.started = true;
     canvas.style.cursor = ''; $('ui').style.display = ''; $('hint').style.display = ''; $('hint').classList.remove('fade');
     setTimeout(() => $('hint').classList.add('fade'), 6000);
     master.gain.setTargetAtTime(0.42, AC.currentTime, 1.2);
@@ -271,10 +271,10 @@
   };
 
   const p = new V(), q = new V(), f2 = new V(), tg = new V(), up = new V(), ut = new V(), back = new V(), m4 = new THREE.Matrix4(), qr = new THREE.Quaternion();
-  stepCine = function (dt, rdt) {
+  cine.move = function (dt, rdt) {
     if (!st.go) { camera.position.copy(P.pos); return; }             // waiting for the click
     st.t += rdt; st.n++;
-    if (st.n === (li > 0 || sc.now ? 3 : 20)) { started = true; if (li > 0 || sc.now) fade = 1; }   // now: the scene opens on a full picture
+    if (st.n === (li > 0 || sc.now ? 3 : 20)) { view.started = true; if (li > 0 || sc.now) view.fade = 1; }   // now: the scene opens on a full picture
     const t = st.t, dur = list[li][1], more = li + 1 < list.length;
     if (t >= dur) { if (more) { enter(li + 1); fader.style.opacity = 1; } else finish(); return; }
     fader.style.opacity = Math.max(more ? clamp((t - (dur - 0.35)) / 0.35, 0, 1) : 0, li > 0 ? clamp(-t / 0.4, 0, 1) : 0);   // black between scenes
@@ -476,13 +476,13 @@ void main(){
     lamp(2, 0, -99, 0, 3.2, 0, 0, 0, 2); lamp(4, 0, -99, 0, 1, 0, 0, 0, 0); lamp(5, 0, -99, 0, 1, 0, 0, 0, 0); lamps(true);
     U.uPLn.value = 6;
     const cell = getCell(5, -4), vents0 = cell.vents.length;
-    cell.vents.push([522.5, 0.1, -346.8, 1], [535, 0.1, -345.2, 1], [528.2, 2.3, -348.6, 0.5]); steamDirty = true;
+    cell.vents.push([522.5, 0.1, -346.8, 1], [535, 0.1, -345.2, 1], [528.2, 2.3, -348.6, 0.5]); steamChanged();
     extraCars.push({ x: 509.3, z: -331, a: -Math.PI / 2, seed: 0.5, brake: 1 });                 // the car that sounds its horn, at the kerb
     const endSet = () => {
       scene.remove(setMesh); setGeo.dispose(); matSet.dispose();
       for (let i = 0; i < 2; i++) { U.uHoleA.value[i].set(1e9, 1e9, 1e9); U.uHoleB.value[i].set(-1e9, -1e9, -1e9); }
       U.uInA.value.set(1e9, 1e9, 1e9); U.uInB.value.set(-1e9, -1e9, -1e9); U.uPLn.value = 0;
-      cell.vents.length = vents0; steamDirty = true; extraCars.length = 0;
+      cell.vents.length = vents0; steamChanged(); extraCars.length = 0;
     };
 
     // ── people and a cat. Each is a box; its fragment shader marches a ray through a figure made of rounded shapes ──
@@ -717,13 +717,13 @@ void main(){
     const figMesh = addMesh(figGeo, matFig), gloMesh = addMesh(gloGeo, matGlo, 12);
     const at = (f, lx, ly, lz) => [f[0] + (lx * Math.cos(f[3]) + lz * Math.sin(f[3])) * f[7], f[1] + ly * f[7], f[2] + (lz * Math.cos(f[3]) - lx * Math.sin(f[3])) * f[7]];   // a point of a figure, in the world
     const flameOf = i => at(figs[i], FL[0], FL[1], FL[2]);
-    const cookU = i => frac((worldT - figs[i][5]) / T_COOK);          // where cook i is in his loop, 0..1
+    const cookU = i => frac((clock.world - figs[i][5]) / T_COOK);          // where cook i is in his loop, 0..1
     const updateFigs = () => {
       let n = 0;
       const glow = (p, size, r, g, b, shape) => { gA.set([p[0], p[1], p[2], size], n * 4); gB.set([r, g, b, shape], n * 4); n++; };
       let flame = null, fd = 1e9;
       figs.forEach((f, i) => {
-        const tl = worldT - f[5];
+        const tl = clock.world - f[5];
         if (f[4] === 2) {                                           // the cat trots its stretch, and then trots it again
           const s = V_CAT * T_CAT * frac(tl / T_CAT), sn = Math.sin(f[3]), cs = Math.cos(f[3]);
           f[0] = f[8] + sn * s; f[2] = f[9] + cs * s; fA[i * 4] = f[0]; fA[i * 4 + 2] = f[2];
@@ -732,16 +732,16 @@ void main(){
           if (lx * sy + (lz - 0.235) * cy > 0.3 * Math.hypot(lx, lz - 0.235))                 // its eyes, when it looks your way
             for (const ex of [-0.024, 0.024]) glow(at(f, ex * cy + 0.05 * sy, 0.312, 0.235 + 0.05 * cy - ex * sy), 0.032, 0.6, 1.8, 0.5, 0);
         } else if (f[4] === 1) {
-          const u = frac(tl / T_COOK), lit = smooth(0.17, 0.2, u) * (1 - smooth(0.47, 0.5, u)), fl = 0.9 + 0.1 * Math.sin(worldT * 33 + i) * Math.sin(worldT * 17);
+          const u = frac(tl / T_COOK), lit = smooth(0.17, 0.2, u) * (1 - smooth(0.47, 0.5, u)), fl = 0.9 + 0.1 * Math.sin(clock.world * 33 + i) * Math.sin(clock.world * 17);
           const fp = flameOf(i), d = Math.hypot(fp[0] - P.pos.x, fp[1] - P.pos.y, fp[2] - P.pos.z);
           if (lit > 0.02) { glow([fp[0], fp[1] + 0.004, fp[2]], 0.024, lit * fl, 0, 0, 1); glow(fp, 0.075, 0.5 * lit * fl, 0.25 * lit * fl, 0.06 * lit * fl, 0); if (d < fd) { fd = d; flame = [fp, lit * fl]; } }
           const ember = u > 0.2 && u < 0.78 ? 0.5 + 1.5 * smooth(0.5, 0.56, u) * (1 - smooth(0.6, 0.66, u)) : 0.3;   // it glows as he draws on it
           glow(at(f, 0, 1.578, 0.18), 0.014, 5 * ember, 1.2 * ember, 0.25 * ember, 0);
         } else if (frac(f[6] * 7.3) > 0.62) glow(at(f, 0.1, 1.33, 0.255), 0.1, 0.4, 0.64, 0.8, 0);   // the light of a telephone on its owner
       });
-      const tc = worldT - T_CRASH;                                    // sparks, at the moment the two cars meet
+      const tc = clock.world - T_CRASH;                                    // sparks, at the moment the two cars meet
       if (Math.abs(tc) < 0.3) { const k = Math.exp(-tc * tc / 0.006); glow([494.6, 0.9, -199.3], 0.4 + 2.2 * k, 7 * k, 4.5 * k, 2 * k, 0); }
-      if (tc > 0 && frac(worldT * 1.3) < 0.5) for (const sd of [-0.62, 0.62]) {   // the warning lights of one car, at its back corners
+      if (tc > 0 && frac(clock.world * 1.3) < 0.5) for (const sd of [-0.62, 0.62]) {   // the warning lights of one car, at its back corners
         const fx = Math.cos(carB.a), fz = Math.sin(carB.a);
         glow([carB.x - fx * 2.2 - fz * sd, 0.75, carB.z - fz * 2.2 + fx * sd], 0.22, 5, 2.2, 0.3, 0);
       }
@@ -841,19 +841,19 @@ void main(){
     extraCars.push(carA, carB);
     const cellW = getCell(4, -2), VENT = [497.2, 0.9, -196.3, 1]; let wrecked = false;
     const crash = t => {
-      const tau = worldT - T_CRASH, e = tau > 0 ? 1 - Math.exp(-1.8 * tau) : 0, s = e / 1.8;
+      const tau = clock.world - T_CRASH, e = tau > 0 ? 1 - Math.exp(-1.8 * tau) : 0, s = e / 1.8;
       if (tau <= 0) { carA.x = 494; carA.z = -201.1 + 15 * tau; carA.a = Math.PI / 2; carB.x = 493.8 + 13 * tau; carB.z = -198; carB.a = 0; }
       else { carA.x = 494 + 3.5 * s; carA.z = -201.1 + 7 * s; carA.a = Math.PI / 2 - 0.6 * e; carB.x = 493.8 + 9 * s; carB.z = -198 + 5.5 * s; carB.a = 1.5 * e; }
       carA.brake = carB.brake = tau > 0 ? 2 : 0;                     // a wreck has no lights
       if (t > 30 && t < 36.6) {                                      // a lamp over the crossing, and the orange of a warning light that still works
-        const bl = wrecked && frac(worldT * 1.3) < 0.5 ? 1 : 0;
+        const bl = wrecked && frac(clock.world * 1.3) < 0.5 ? 1 : 0;
         lamp(4, 497, 7.5, -197.5, 17, 0.5, 0.65, 0.55, 0); lamp(5, carB.x - 2.4 * Math.cos(carB.a), 1.0, carB.z - 2.4 * Math.sin(carB.a), 7, 2.4 * bl, 1.1 * bl, 0.15 * bl, 0);
       } else if (t >= 36.6 && t < 36.8) { lamp(4, 0, -99, 0, 1, 0, 0, 0, 0); lamp(5, 0, -99, 0, 1, 0, 0, 0, 0); }
       const wreck = tau > 0;
-      if (wreck !== wrecked) { wrecked = wreck; if (wreck) cellW.vents.push(VENT); else cellW.vents.splice(cellW.vents.indexOf(VENT), 1); steamDirty = true; }
+      if (wreck !== wrecked) { wrecked = wreck; if (wreck) cellW.vents.push(VENT); else cellW.vents.splice(cellW.vents.indexOf(VENT), 1); steamChanged(); }
       if (t > 26.5 && t < 36) for (const c of cars) if (Math.abs(c.x - 497) < 45 && Math.abs(c.z + 200) < 45) c.s = 1e7;   // the crossing is theirs alone: other cars start again elsewhere
     };
-    const endGlass = () => { if (wrecked) { cellW.vents.splice(cellW.vents.indexOf(VENT), 1); steamDirty = true; } scene.remove(shMesh); shGeo.dispose(); geoTri.dispose(); matSh.dispose(); };
+    const endGlass = () => { if (wrecked) { cellW.vents.splice(cellW.vents.indexOf(VENT), 1); steamChanged(); } scene.remove(shMesh); shGeo.dispose(); geoTri.dispose(); matSh.dispose(); };
 
     // ── sound. Recordings beside the page, in sounds/tour/. They are fetched when the audio runs. A missing file is a silent one ──
     const SND = ['tick', 'horn', 'cat', 'lighter', 'glass', 'crash', 'crowd', 'powerdown', 'rewind', 'vo1', 'vo2'];
@@ -910,7 +910,7 @@ void main(){
       // the cook's lighter, each time round
       for (let i = 0; i < 2; i++) {
         const u = cookU(i), inside = P.pos.x > 513.5 && P.pos.x < 551 && P.pos.z > -386.5 && P.pos.z < -348.9 && P.pos.y < TOP - 0.5;
-        if (prevU[i] < 0.17 && u >= 0.17 && timeRate > 0 && !inside) play('lighter', 1.0, { pos: flameOf(i), ref: 5 });
+        if (prevU[i] < 0.17 && u >= 0.17 && clock.rate > 0 && !inside) play('lighter', 1.0, { pos: flameOf(i), ref: 5 });
         prevU[i] = u;
       }
       if (t >= 42 && !cut) { cut = true; AU.nodes.out.gain.cancelScheduledValues(AC.currentTime); AU.nodes.out.gain.setValueAtTime(0, AC.currentTime); }   // the cut: silence, thunder and all
@@ -971,15 +971,15 @@ void main(){
     const frame = (t, rdt) => {
       fx.nextFlash = 99;                                            // the lightning of the film is in its script
       // the pace of the world: it holds for the two freeze frames, runs back in the rewind, and runs backwards while the film runs on
-      timeRate = t < 2.2 ? 1 : t < 3.2 ? 0 : t < 3.95 ? -5.2 : t < 4 ? 0 : t < 16.7 ? 1 : t < 17.9 ? 0 : t < 30 ? 1 : t < 30.5 ? 1 - 4 * (t - 30) : t < 38.2 ? -1 : t < 38.6 ? -1 + 5 * (t - 38.2) : t < 42 ? 1 : 0;
+      clock.rate = t < 2.2 ? 1 : t < 3.2 ? 0 : t < 3.95 ? -5.2 : t < 4 ? 0 : t < 16.7 ? 1 : t < 17.9 ? 0 : t < 30 ? 1 : t < 30.5 ? 1 - 4 * (t - 30) : t < 38.2 ? -1 : t < 38.6 ? -1 + 5 * (t - 38.2) : t < 42 ? 1 : 0;
       // the fold goes up, and comes down again when time runs backwards
       const a = t < 30.3 ? smooth(20.5, 24.9, t) : 1 - smooth(30.3, 36.5, t), far = smooth(20.2, 21, t) * (1 - smooth(36.2, 37, t));
       setFold(HINGE, RAD, Math.PI * a);
-      fogAlt = far > 0 ? lerp(P.pos.y, 900, far) : null;
+      view.fogAlt = far > 0 ? lerp(P.pos.y, 900, far) : null;
       // the blackout: a band of dark 700 m deep comes from the north, and reaches the roof at 20.2 s. Behind it the lights come back
       if (t > 18.2 && t < 23) U.uDark.value.set(0, -1, 360 + 550 * (t - 20.2), 700); else U.uDark.value.w = 0;
       dof(t); updateFigs(); lamps(t < 4 || t >= 11.5); crash(t); sound(t);
-      fovAdd = lin(ZOOM, t);
+      view.fovAdd = lin(ZOOM, t);
       // words
       show(card, t >= 42.3 ? 'WAKE UP' : '4 minutes earlier.', t >= 42.3 ? smooth(42.3, 42.5, t) : smooth(2.3, 2.5, t) * (1 - smooth(3.05, 3.2, t)));
       card.style.letterSpacing = t >= 42 ? '.35em' : '.04em';
@@ -1020,7 +1020,7 @@ void main(){
         [18.3, () => play('powerdown', 0.4)], [18.5, low('thud', 0.22, 0.6)], [18.95, low('thud', 0.3, 0.58)], [19.4, low('thud', 0.4, 0.56)], [19.85, low('thud', 0.55, 0.54)], [20.3, low('thud', 0.7, 0.5)],
         [20.7, low('boom', 0.5, 0.3)], [23.0, low('boom', 0.4, 0.24)], [30.0, whoosh(0.9, 1.2, 4, 0.45)], [30.9, backwards('glass', 0.9, 32.66)], [32.3, backwards('crash', 0.9, 34.45)],
         [38.95, honk(1.6, 0.8)], [39.3, meow(3)]],
-      end() { timeRate = 1; fogAlt = null; fovAdd = 0; setFold(0, 300, 0); U.uDark.value.w = 0; matComp.uniforms.uAper.value = 0; endSound(); endGlass(); endFigs(); endSet(); },
+      end() { clock.rate = 1; view.fogAlt = null; view.fovAdd = 0; setFold(0, 300, 0); U.uDark.value.w = 0; matComp.uniforms.uAper.value = 0; endSound(); endGlass(); endFigs(); endSet(); },
     };
   };
 
@@ -1033,7 +1033,7 @@ void main(){
       ev: [[1.0, () => { strike(140, 480)(); fx.flashAmp = 1.2; }]] };
   };
 
-  cineOn = true; cine.pan = 0;
+  cine.on = true; cine.pan = 0;
   canvas.style.cursor = 'none'; $('ui').style.display = 'none'; $('hint').style.display = 'none'; $('intro').style.display = 'none';
   enter(0);
   // a browser plays no sound before a click, so the tour waits for one
@@ -1043,7 +1043,7 @@ void main(){
   const go = () => {
     if (asked) return; asked = true;
     startAudio(); gate.firstChild.textContent = '';
-    const begin = () => { if (st.go) return; playMusic(true); gate.remove(); st.go = true; worldT = W0[list[0][0]]; };   // the wait at the gate does not count
+    const begin = () => { if (st.go) return; playMusic(true); gate.remove(); st.go = true; clock.world = W0[list[0][0]]; };   // the wait at the gate does not count
     AU.musicReady.then(begin); setTimeout(begin, 4000);              // the music starts with the tour; do not wait for it for long
   };
   gate.addEventListener('click', go);
