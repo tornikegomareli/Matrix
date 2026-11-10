@@ -102,8 +102,8 @@ let SEED = (() => {
 const seedHex = () => SEED.toString(16).toUpperCase().padStart(8, '0');
 
 const GLITCH_NAMES = ['OFF', 'LOW', 'MED', 'HIGH'], GLITCH_GAP = [1e9, 13, 6.5, 2.6];
-const CODE_NAMES = ['LOW', 'MED', 'HIGH'], CODE_MUL = [0.45, 1.0, 1.9];
-const S = { rain: true, traffic: true, glitch: 2, code: 1 };
+const CODE_NAMES = ['LOW', 'MED', 'HIGH'], CODE_MUL = [0.12, 0.35, 1.0];
+const S = { rain: true, traffic: true, glitch: 0, code: 1 };
 
 // smooth value noise over cell coordinates, used for district height and style
 function vnoise(x, z, salt) {
