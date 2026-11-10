@@ -8,6 +8,7 @@ It only loops, filters, pans, changes the playback rate and mixes.
 The one generated buffer is the impulse response of the reverb. It is a filter for the recordings, not a sound.
 
 The recordings are embedded in `code-city.html` as MP3 in base64. They are listed in [assets.md](assets.md).
+The music is the one sound that is not a field recording. It is a track in its own file, `music.mp3`.
 
 ## Start
 
@@ -17,15 +18,27 @@ It builds the graph and decodes the recordings with `decodeAudioData`. Each soun
 ## The graph
 
 ```
-loops and one-shots ─┬─> master ─> duck ─> lowpass ─> compressor ─> soft ceiling ─> output
-                     └─> reverb ─────┘                                  ^
-thunder ──> thunder lowpass ────────────────────────────────────────────┘
+loops, one-shots, music ─┬─> master ─> duck ─> lowpass ─> compressor ─> soft ceiling ─> out ─> output
+                         └─> reverb ─────┘                                  ^
+thunder ──> thunder lowpass ────────────────────────────────────────────────┘
 ```
 
 - **Compressor:** threshold −12 dB, ratio 3.5. It holds the bed of rain, wind and city together.
 - **Soft ceiling:** a `tanh` curve in a wave shaper. Nothing leaves above full scale.
 - **Thunder goes around the compressor.** A close strike is therefore much louder than the rain. Measured in a recording, a strike at 460 m is 7 dB above the rain.
 - **Reverb:** a convolver with a 3.2 second impulse: a decaying wash with a few hard echoes, for a city of towers.
+- **Out:** one gain at the end. The `SOUND` switch (key `5`) sets it to 0 or 1.
+
+## Music
+
+`startAudio()` fetches `music.mp3`, decodes it and plays it from its beginning. The file is beside the page, so there is music only over http.
+Six seconds before the track ends, the next pass starts and fades in over the end of the old one.
+A tour calls `playMusic(true)`, which cuts the track and starts it again from its beginning.
+
+The music goes into `master`, so bullet time ducks it with the rest.
+Its level is the constant `MUSIC`. It drops to 60 % where there is no rain, so it stays under the weather.
+Measured in a recording at the start of the page, the music is 6.4 dB below the rain, wind and city together. Only below 80 Hz is it the louder part.
+The `MUSIC` switch (key `6`) sets its level to 0.
 
 ## Loops without a seam
 

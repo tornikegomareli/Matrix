@@ -8,6 +8,7 @@ A tour is a fixed camera path with timed events. It runs live in the page: the s
 | `code-city.html?tour=reel` | Four scenes: the city, a train, the recompile wave, and the sky. | 70 s |
 
 A tour waits for a click, because the browser allows sound only after one. `Esc` ends it.
+The click starts the music from its beginning, and the tour begins when the music is decoded (it waits 4 seconds at most).
 After a tour the page flies by itself again and the normal controls work.
 
 Tours need the page to be served over http, because the page fetches `tour.js`.

@@ -4,7 +4,7 @@ An endless night city in the rain, graded like the simulated world of the Matrix
 The whole world is one HTML file. It has no build step and no server code.
 
 Everything you see is generated in the browser: the city, the clouds, the weather and the traffic.
-Everything you hear is a recording. The stars, the moon and the Milky Way come from real data.
+Every sound effect is a recording, and a music track plays under them. The stars, the moon and the Milky Way come from real data.
 
 ## Run it
 
@@ -23,7 +23,7 @@ Then open one of these addresses:
 | `http://127.0.0.1:8931/code-city.html?tour=reel` | A 70 second scripted tour of the world. |
 
 Add `#seed=C0DEC17E` (any eight hex digits) to get the same city again.
-You can also open `code-city.html` from disk. The tours need the local server.
+You can also open `code-city.html` from disk. The tours and the music need the local server.
 
 Sound starts with the first click, because browsers block it before that.
 
@@ -42,6 +42,7 @@ Sound starts with the first click, because browsers block it before that.
 | `R` | New seed |
 | `H` | Hide the interface |
 | `1` `2` `3` `4` | Rain, traffic, glitches, amount of code |
+| `5` `6` | All sound, music |
 
 On a touch screen there is a stick, a boost button, a time button and a cinematic button.
 
@@ -51,7 +52,7 @@ On a touch screen there is a stick, a boost button, a time button and a cinemati
 |---|---|
 | `code-city.html` | The world: markup, styles, one JavaScript module, all shaders, and the embedded data. |
 | `tour.js` | The two scripted tours. The page loads it only when the address has `?tour=`. |
-| `tour-snd/drone.mp3` | One sound that only the film uses. |
+| `music.mp3` | The background music. The page fetches it, so it plays only over http. |
 | `record.mjs` | A frame-exact video recorder for the page (Node.js, Chrome, ffmpeg). |
 | `code-city-1080p60.mp4` | A recording of the first version. It does not show the current look. |
 | `docs/` | How it works. |

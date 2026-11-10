@@ -47,6 +47,8 @@
     <button id="tTraffic"></button>
     <button id="tGlitch"></button>
     <button id="tCode"></button>
+    <button id="tSound"></button>
+    <button id="tMusic"></button>
   </div>
   <div id="hint">WASD move &middot; MOUSE look (click) &middot; SPACE launch &middot; SHIFT boost &middot; Q/E down/up &middot; F bullet-time &middot; G recompile &middot; C cinematic &middot; R new seed &middot; H hide UI</div>
   <div id="touch">
@@ -103,7 +105,7 @@ const seedHex = () => SEED.toString(16).toUpperCase().padStart(8, '0');
 
 const GLITCH_NAMES = ['OFF', 'LOW', 'MED', 'HIGH'], GLITCH_GAP = [1e9, 13, 6.5, 2.6];
 const CODE_NAMES = ['LOW', 'MED', 'HIGH'], CODE_MUL = [0.15, 0.45, 1.0];
-const S = { rain: true, traffic: true, glitch: 0, code: 1 };
+const S = { rain: true, traffic: true, glitch: 0, code: 1, sound: true, music: true };
 
 // smooth value noise over cell coordinates, used for district height and style
 function vnoise(x, z, salt) {
@@ -1965,6 +1967,8 @@ addEventListener('keydown', e => {
   else if (e.code === 'Digit2') toggle('traffic');
   else if (e.code === 'Digit3') toggle('glitch');
   else if (e.code === 'Digit4') toggle('code');
+  else if (e.code === 'Digit5') toggle('sound');
+  else if (e.code === 'Digit6') toggle('music');
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -2244,10 +2248,11 @@ function setCine(on, look) {
 }
 
 // ───────────────────────── audio: recordings only, silent until the first click ─────────────────────────
-// Every sound is a recording that is public domain or CC0 (the list is at the end of the file). Nothing is synthesised:
+// Every sound is a recording (the list is at the end of the file; the music is the file music.mp3). Nothing is synthesised:
 // the script only loops, filters, pans and mixes.
 let AC = null, master = null, lpMaster = null, verbIn = null, thBus = null;
 const AU = { nodes: {}, buf: {} };
+const MUSIC = 0.3;                                               // the level of the music: it stays under the weather
 const LOOPS = { rain: 16, rainClose: 7, wind: 11, city: 18, train: 7, heart: 2.89 };   // loop lengths in seconds. Each file wraps 0.25 s past both ends
 const aGain = v => { const g = AC.createGain(); g.gain.value = v; return g; };
 const aFilt = (type, f, q) => { const n = AC.createBiquadFilter(); n.type = type; n.frequency.value = f; if (q) n.Q.value = q; return n; };
@@ -2294,7 +2299,7 @@ function startAudio() {
   const clip = AC.createWaveShaper(), curve = new Float32Array(1025);                             // soft ceiling: nothing leaves above full scale
   for (let i = 0; i < 1025; i++) curve[i] = Math.tanh((i / 512 - 1) * 1.6) / Math.tanh(1.6) * 0.94;
   clip.curve = curve;
-  N.duck = aGain(1); aChain(master, N.duck, lpMaster, comp, clip, AC.destination);
+  N.duck = aGain(1); N.out = aGain(S.sound ? 1 : 0); aChain(master, N.duck, lpMaster, comp, clip, N.out, AC.destination);   // out: the switch for all sound
   master.gain.linearRampToValueAtTime(0.42, AC.currentTime + 2.5);
   const conv = AC.createConvolver(); conv.buffer = mkImpulse(3.2);
   verbIn = aGain(1); aChain(verbIn, conv, aGain(0.55), master);
@@ -2317,6 +2322,17 @@ function startAudio() {
   N.heart = aGain(0); N.heart.connect(clip);                     // a slow heartbeat, heard in bullet-time
   loadSound('heart').then(() => aLoop('heart', N.heart));
   for (const n of ['thunderA', 'thunderB', 'thunderC', 'boom', 'thud', 'static']) loadSound(n);
+  // the music: a file beside the page, so it plays only when the page is served over http. It starts when it is decoded
+  N.music = aGain(0); N.music.connect(master);
+  AU.musicReady = fetch('music.mp3').then(r => r.ok ? r.arrayBuffer() : Promise.reject()).then(b => AC.decodeAudioData(b)).then(b => { AU.buf.music = b; playMusic(true); }).catch(() => {});
+}
+// play the music from its beginning. restart: cut what plays now. Otherwise the new pass fades in over the end of the old one
+function playMusic(restart) {
+  const b = AU.buf.music, old = AU.mus; if (!b) return;
+  if (old) { if (restart) old.s.stop(); else { old.g.gain.setTargetAtTime(0, AC.currentTime, 1.2); old.s.stop(AC.currentTime + 6); } }
+  const s = AC.createBufferSource(), g = aGain(old && !restart ? 0 : 1); s.buffer = b; aChain(s, g, AU.nodes.music); s.start();
+  if (old && !restart) g.gain.setTargetAtTime(1, AC.currentTime, 1.2);
+  AU.mus = { s, g, end: AC.currentTime + b.duration };
 }
 function updateAudio(rdt) {
   if (!AC) return;
@@ -2333,6 +2349,8 @@ function updateAudio(rdt) {
   aSet(lpMaster.frequency, lerp(18000, 420, P.slow), 0.08);                                     // bullet-time: the world goes underwater and far away,
   aSet(N.duck.gain, 1 - 0.8 * P.slow, 0.1); aSet(N.heart.gain, P.slow, 0.12);             // and the heart is what is left
   aSet(thBus.frequency, Math.min(lerp(16000, 320, U.uAbove.value), lerp(16000, 420, P.slow)), 0.3);   // thunder from above the clouds is a dull thud
+  aSet(N.music.gain, S.music ? MUSIC * (0.6 + 0.4 * rainOn * rainK) : 0, 0.4);                    // lower where the weather is quiet
+  if (AU.mus && AC.currentTime > AU.mus.end - 6) playMusic();
   const tk = clamp(1 - nearTrain / 260, 0, 1);
   aSet(N.train.gain, tk * tk * 4.5 * below, 0.1); aSet(N.trainPan.pan, clamp(nearTrainPan / 60, -1, 1), 0.1);
 }
@@ -2479,16 +2497,20 @@ function refreshUI() {
   $('tTraffic').textContent = '[2] TRAFFIC ' + (S.traffic ? 'ON' : 'OFF');
   $('tGlitch').textContent = '[3] GLITCH ' + GLITCH_NAMES[S.glitch];
   $('tCode').textContent = '[4] CODE ' + CODE_NAMES[S.code];
+  $('tSound').textContent = '[5] SOUND ' + (S.sound ? 'ON' : 'OFF');
+  $('tMusic').textContent = '[6] MUSIC ' + (S.music ? 'ON' : 'OFF');
   U.uCode.value = CODE_MUL[S.code]; matGround.uniforms.uRainOn.value = S.rain ? 1 : 0; matGround.uniforms.uTraffic.value = S.traffic ? 1 : 0;
 }
 function toggle(k) {
   if (k === 'rain') S.rain = !S.rain;
   else if (k === 'traffic') S.traffic = !S.traffic;
   else if (k === 'glitch') { S.glitch = (S.glitch + 1) % 4; fx.nextGlitch = Math.min(fx.nextGlitch, GLITCH_GAP[S.glitch] * 0.5); }
+  else if (k === 'sound') { S.sound = !S.sound; if (AC) aSet(AU.nodes.out.gain, S.sound ? 1 : 0, 0.05); }
+  else if (k === 'music') S.music = !S.music;                     // updateAudio() sets its level
   else S.code = (S.code + 1) % 3;
   refreshUI();
 }
-for (const [id, k] of [['tRain', 'rain'], ['tTraffic', 'traffic'], ['tGlitch', 'glitch'], ['tCode', 'code']])
+for (const [id, k] of [['tRain', 'rain'], ['tTraffic', 'traffic'], ['tGlitch', 'glitch'], ['tCode', 'code'], ['tSound', 'sound'], ['tMusic', 'music']])
   $(id).addEventListener('click', e => { toggle(k); e.currentTarget.blur(); });
 
 // start a few blocks before the tallest district nearby, on a road, flying toward it

@@ -4,7 +4,7 @@
 //   reel   70 seconds: a look around, the street, a train, the recompile wave, a spire, the sky, the dive from the top
 // A click starts a tour, because a browser plays no sound before one. Esc ends it. After a tour the page flies by itself again.
 // The paths are written for the seed C0DEC17E, and each scene sets the world clock, so the clouds stand where its path expects them.
-// tour-snd/drone.mp3 is a recording from Wikimedia Commons: "MainsBrum50Hz" (public domain).
+// A tour starts the music of the page from its beginning.
 (() => {
   const D = window.__tourDef, V = THREE.Vector3;
   const LISTS = { film: [['film', 41.3]], reel: [['city', 26], ['train', 6.8], ['wave', 6.6], ['sky', 30.6]] };
@@ -14,17 +14,6 @@
   const M = [0.4082, 0.4082, -0.8165];                              // moon direction (from the sky shader)
   const pageStep = stepCine, keep = { glitch: S.glitch };
   const W0 = { film: 55, city: 0, train: 100, wave: 200, sky: 1090 };   // the world clock at the start of each scene
-
-  // ── sounds that only the tours use ──
-  const raw = {}, tbuf = {};
-  const fetched = Promise.all(['drone'].map(k => fetch('tour-snd/' + k + '.mp3').then(r => r.arrayBuffer()).then(b => { raw[k] = b; })));
-  const play = (name, dest, gain, rate, offset, dur, loop) => {
-    const b = tbuf[name]; if (!b) return null;
-    const s = AC.createBufferSource(), g = AC.createGain(); s.buffer = b; s.playbackRate.value = rate; g.gain.value = gain;
-    s.connect(g); g.connect(dest);
-    if (loop) { s.loop = true; s.loopStart = 0.1; s.loopEnd = 0.1 + loop; s.start(AC.currentTime, offset); } else s.start(AC.currentTime, offset, dur);
-    return g;
-  };
 
   // ── overlays ──
   const els = [], GREEN = '#39ff7a', MONO = 'ui-monospace,"SF Mono",Menlo,Consolas,monospace';
@@ -107,8 +96,6 @@
         if (t < 3.0) { typeText(tx, TEXT, t, 0.9, 0.15); return; }
         if (!rain) {
           rain = mkRain(); tx.style.display = 'none';
-          const drone = play('drone', master, 0.0001, 0.8, 0.1, 0, 4);        // a low drone fades in: a recording of mains hum, slowed
-          if (drone) { drone.gain.setTargetAtTime(1.6, AC.currentTime, 1.1); drone.gain.setTargetAtTime(0.0001, AC.currentTime + 6.6, 0.9); }
         }
         const { g, atlas, cols, W, H, CW, RH, NC, NR, SW, SH } = rain;
         g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
@@ -259,7 +246,7 @@
   const onKey = e => {                                              // the page's keys rest while a tour runs
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     e.stopPropagation();
-    if (!st.go) go(); else if (e.code === 'Escape') finish();
+    if (!asked) go(); else if (e.code === 'Escape' && st.go) finish();
   };
   const finish = () => {                                            // hand the camera back to the page's own cinematic flight
     if (done) return; done = true;
@@ -327,10 +314,12 @@
   // a browser plays no sound before a click, so the tour waits for one
   const gate = mk(`position:fixed;inset:0;z-index:30;background:#000;display:flex;flex-direction:column;gap:2vh;align-items:center;justify-content:center;cursor:pointer;font:700 2.6vh ${MONO};color:${GREEN};letter-spacing:.3em;text-shadow:0 0 1.2vh rgba(57,255,122,.7)`);
   gate.innerHTML = `<div>CLICK TO START</div><div style="font-size:1.5vh;opacity:.5">${D.scene.toUpperCase()} &middot; ESC ENDS IT</div>`;
+  let asked = false;
   const go = () => {
-    if (st.go) return;
-    startAudio(); fetched.then(() => { for (const k in raw) AC.decodeAudioData(raw[k]).then(b => { tbuf[k] = b; }); });
-    gate.remove(); st.go = true; worldT = W0[list[0][0]];          // the wait at the gate does not count
+    if (asked) return; asked = true;
+    startAudio(); gate.firstChild.textContent = '';
+    const begin = () => { if (st.go) return; playMusic(true); gate.remove(); st.go = true; worldT = W0[list[0][0]]; };   // the wait at the gate does not count
+    AU.musicReady.then(begin); setTimeout(begin, 4000);              // the music starts with the tour; do not wait for it for long
   };
   gate.addEventListener('click', go);
   addEventListener('keydown', onKey, true);

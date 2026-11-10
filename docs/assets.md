@@ -1,7 +1,7 @@
 # External material
 
-The world is generated, but three kinds of material come from outside: the library, the sounds, and the sky data.
-Everything below is public domain or CC0, except Three.js, which is MIT.
+The world is generated, but four kinds of material come from outside: the library, the sounds, the music, and the sky data.
+The sounds and the sky data are public domain or CC0. Three.js is MIT. The music has the Pixabay licence.
 
 ## Library
 
@@ -26,7 +26,15 @@ They were cut, turned into loops where needed, and encoded as mono MP3 at 32 kHz
 | `heart` | "Athletic bradycardia" (a resting heart at 42 beats a minute) | Athletearrhythmia, Wikimedia Commons | CC0 |
 | `static` | "Static B" | Oreocooke, Wikimedia Commons | CC0 |
 | `thunderA`, `thunderB`, `thunderC` | "Storm, Thunderbolts" (three strikes cut from it) | stephan, pdsounds.org record 301, via Wikimedia Commons | Public domain |
-| `tour-snd/drone.mp3` | "MainsBrum50Hz" (mains hum, played slowed in the film) | Wikimedia Commons | Public domain |
+
+## Music
+
+| File | Track | Author, source | Licence |
+|---|---|---|---|
+| `music.mp3` | "Futuristic Suspense (Reversed Engine)" (the title is read from the file name) | AlexGrohl, pixabay.com, track 175593 | Pixabay Content License |
+
+The file is the download from Pixabay, encoded again as MP3 at 128 kbit/s. It is 3 minutes 57 seconds long.
+The Pixabay licence allows use without attribution. It does not allow the track to be distributed on its own, so do not offer the file as a download.
 
 ## Sky
 
