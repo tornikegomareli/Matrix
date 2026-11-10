@@ -10,14 +10,14 @@
 (() => {
   const D = window.__tourDef, V = THREE.Vector3;
   const HOOK = 1.8;
-  const LISTS = { film: [['film', 41.3]], reel: [['city', 26], ['train', 6.8], ['wave', 6.6], ['sky', 30.6]], loop: [['loop', 45.2]] };
+  const LISTS = { film: [['film', 41.3]], reel: [['city', 26], ['train', 6.8], ['wave', 6.6], ['sky', 30.6]], loop: [['loop', 45.2]], poster: [['poster', 60]] };
   let list = LISTS[D.scene];
   if (!list) { console.warn('tour: there is no tour named ' + D.scene); return; }
   if (new URLSearchParams(location.search).has('hook')) list = [['hook', HOOK], ...list];   // &hook: a short shot in front of the tour, for the first frame of a video
   if (seedHex() !== 'C0DEC17E') { location.hash = 'seed=C0DEC17E'; location.reload(); return; }
   const M = [0.4082, 0.4082, -0.8165];                              // moon direction (from the sky shader)
   const pageStep = stepCine, keep = { glitch: S.glitch };
-  const W0 = { film: 55, city: 0, train: 100, wave: 200, sky: 1090, loop: 300, hook: 300 };   // the world clock at the start of each scene
+  const W0 = { film: 55, city: 0, train: 100, wave: 200, sky: 1090, loop: 300, hook: 300, poster: 300 };   // the world clock at the start of each scene
 
   // ── overlays ──
   const els = [], GREEN = '#39ff7a', MONO = 'ui-monospace,"SF Mono",Menlo,Consolas,monospace';
@@ -1043,6 +1043,15 @@ void main(){
         [38.95, honk(1.6, 0.8)], [39.3, meow(3)]],
       end() { timeRate = 1; fogAlt = null; fovAdd = 0; setFold(0, 300, 0); U.uDark.value.w = 0; matComp.uniforms.uAper.value = 0; endSound(); endGlass(); endFigs(); endSet(); },
     };
+  };
+
+  // ───────────────────────── a still picture: the first frame of a video ─────────────────────────
+  // The camera stands still over the roofs and looks west. One second in, lightning strikes the mast that is most in front of it.
+  // The picture is this scene a moment after the strike, at 3840×2160 (add &pixels=8.3 to the address).
+  scenes.poster = () => {
+    S.glitch = 0; refreshUI(); standing(); fx.nextFlash = 99;
+    return { pos: [[0, 500, 100, -850, 1], [60, 500, 100, -850, 1]], look: [{ t: 0, p: [213, 115, -763], w: 1 }], t0: 0, now: true, boost: [], bank: [[0, 0]],
+      ev: [[1.0, () => { strike(140, 480)(); fx.flashAmp = 1.2; }]] };
   };
 
   cineOn = true; cine.pan = 0;
