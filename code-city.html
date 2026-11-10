@@ -2098,18 +2098,18 @@ function startAudio() {
   AC = new Ctx();
   const N = AU.nodes;
   master = aGain(0); lpMaster = aFilt('lowpass', 18000);
-  const comp = AC.createDynamicsCompressor(); comp.threshold.value = -16; comp.ratio.value = 5; comp.release.value = 0.3;
+  const comp = AC.createDynamicsCompressor(); comp.threshold.value = -12; comp.ratio.value = 3.5; comp.release.value = 0.3;
   const clip = AC.createWaveShaper(), curve = new Float32Array(1025);                             // soft ceiling: nothing leaves above full scale
   for (let i = 0; i < 1025; i++) curve[i] = Math.tanh((i / 512 - 1) * 1.6) / Math.tanh(1.6) * 0.94;
   clip.curve = curve;
   aChain(master, lpMaster, comp, clip, AC.destination);
-  master.gain.linearRampToValueAtTime(0.5, AC.currentTime + 2.5);
+  master.gain.linearRampToValueAtTime(0.6, AC.currentTime + 2.5);
   noiseBuf = mkNoise(3, false); pinkBuf = mkNoise(5, true);
   const conv = AC.createConvolver(); conv.buffer = mkImpulse(3.2);
   verbIn = aGain(1); aChain(verbIn, conv, aGain(0.55), master);
   thBus = aFilt('lowpass', 9000); thBus.connect(master); aChain(thBus, aGain(0.6), verbIn);
   // low drone: detuned oscillators through a slowly moving lowpass
-  const dl = aFilt('lowpass', 150, 3), dg = aGain(0.27); aChain(dl, dg, master);
+  const dl = aFilt('lowpass', 150, 3), dg = aGain(0.13); aChain(dl, dg, master);
   for (const [fq, type] of [[41.2, 'sawtooth'], [41.55, 'sawtooth'], [61.9, 'sine'], [82.7, 'triangle']]) {
     const o = AC.createOscillator(); o.type = type; o.frequency.value = fq; aChain(o, aGain(0.3), dl); o.start(); droneOscs.push(o);
   }
@@ -2132,7 +2132,7 @@ function startAudio() {
   // cars: five voices that follow the nearest cars (engine + tyres on wet asphalt)
   for (let i = 0; i < 5; i++) {
     const eng = AC.createOscillator(); eng.type = 'sawtooth'; eng.frequency.value = 60; eng.start();
-    const v = { car: null, eng, engG: aGain(0.3), tyreF: aFilt('bandpass', 2400, 0.7), tyreG: aGain(0), out: aGain(0), pan: aPan(0), d0: 0 };
+    const v = { car: null, eng, engG: aGain(0.5), tyreF: aFilt('bandpass', 2400, 0.7), tyreG: aGain(0), out: aGain(0), pan: aPan(0), d0: 0 };
     aChain(eng, aFilt('lowpass', 260, 1.5), v.engG, v.out); aChain(aLoop(noiseBuf), v.tyreF, v.tyreG, v.out);
     aChain(v.out, v.pan, master); aChain(v.pan, aGain(0.25), verbIn);
     AU.cars.push(v);
@@ -2140,7 +2140,7 @@ function startAudio() {
   // one voice for the nearest train: rumble and wheel clatter
   N.train = aGain(0); N.trainPan = aPan(0); aChain(N.train, N.trainPan, master); aChain(N.trainPan, aGain(0.4), verbIn);
   aChain(aLoop(pinkBuf), aFilt('lowpass', 230), aGain(1.3), N.train);
-  const clG = aGain(0), clO = AC.createOscillator(); clO.type = 'square'; clO.frequency.value = 6.5; aChain(clO, aGain(0.5), clG.gain); clO.start();
+  const clG = aGain(0.6), clO = AC.createOscillator(); clO.type = 'square'; clO.frequency.value = 6.5; aChain(clO, aGain(0.6), clG.gain); clO.start();
   aChain(aLoop(noiseBuf), aFilt('bandpass', 1300, 2.5), clG, N.train);
 }
 // one shot of filtered noise or tone with an envelope. env = [[time, level], ...] from the start time
@@ -2158,15 +2158,15 @@ function updateAudio(rdt) {
   const street = 1 - smooth(5, 70, alt), cell = getCell(Math.floor(P.pos.x / CELL), Math.floor(P.pos.z / CELL));
   const surface = Math.max(street, 1 - smooth(4, 45, Math.abs(alt - cell.maxH)));               // close to something the rain can hit
   const gust = 0.82 + 0.18 * Math.sin(realT * 0.31) * Math.sin(realT * 0.173 + 1);
-  aSet(N.hiss.gain, rainOn * below * (0.34 + 0.14 * street) * (1 - 0.6 * inC) * gust);
-  aSet(N.roar.gain, rainOn * below * 0.36 * (1 - 0.35 * street) * (1 - 0.5 * smooth(300, 620, alt)));
+  aSet(N.hiss.gain, rainOn * below * (0.22 + 0.08 * street) * (1 - 0.6 * inC) * gust);
+  aSet(N.roar.gain, rainOn * below * 0.22 * (1 - 0.35 * street) * (1 - 0.5 * smooth(300, 620, alt)));
   aSet(N.patter.gain, rainOn * below * lerp(0.03, 0.34, street) * (1 - inC) * gust);
-  aSet(N.plink.gain, rainOn * below * surface * 0.2 * (1 - inC));
+  aSet(N.plink.gain, rainOn * below * surface * 0.28 * (1 - inC));
   aSet(N.wind.gain, 0.012 + 0.4 * Math.pow(sn, 1.5), 0.15); aSet(N.windF.frequency, 240 + 1500 * sn, 0.15);
   aSet(N.rush.gain, 0.5 * sn * sn + 0.35 * inC * Math.min(1, sn * 3), 0.15);
   aSet(N.hi.gain, U.uAbove.value * (0.1 + 0.25 * sn), 0.4);
-  aSet(N.city.gain, (S.traffic ? 1 : 0.4) * below * 0.5 * (1 - smooth(30, 520, alt)) * (1 - cell.unf));
-  aSet(N.hum.gain, cell.unf * 0.07 * (1 - smooth(120, 420, alt)), 0.5);
+  aSet(N.city.gain, (S.traffic ? 1 : 0.4) * below * 0.32 * (1 - smooth(30, 520, alt)) * (1 - cell.unf));
+  aSet(N.hum.gain, cell.unf * 0.22 * (1 - smooth(120, 420, alt)), 0.5);
   aSet(lpMaster.frequency, lerp(18000, 420, P.slow), 0.08);                                     // bullet-time: the world goes underwater
   aSet(thBus.frequency, lerp(9000, 320, U.uAbove.value), 0.3);                                  // thunder from above the deck is a dull thud
   for (const o of droneOscs) aSet(o.detune, -900 * P.slow, 0.12);
@@ -2192,9 +2192,9 @@ function updateAudio(rdt) {
     const dx = c.x - P.pos.x, dz = c.z - P.pos.z, d = Math.hypot(dx, alt - 0.8, dz);
     const dop = clamp(1 - (d - v.d0) / Math.max(rdt, 1e-3) / 343, 0.6, 1.6) * slowK; v.d0 = d;       // closing speed bends the pitch
     const k = clamp(1 - d / 75, 0, 1);
-    aSet(v.out.gain, k * k * 0.5, 0.06); aSet(v.pan.pan, clamp((dx * cy - dz * sy) / 22, -1, 1), 0.06);
+    aSet(v.out.gain, k * k * 1.2, 0.06); aSet(v.pan.pan, clamp((dx * cy - dz * sy) / 22, -1, 1), 0.06);
     aSet(v.eng.frequency, (52 + c.v * 5 + c.seed * 20) * dop, 0.05);
-    aSet(v.tyreF.frequency, (1700 + c.v * 80) * dop, 0.05); aSet(v.tyreG.gain, Math.pow(c.v / 16, 1.5) * 0.55, 0.08);
+    aSet(v.tyreF.frequency, (1700 + c.v * 80) * dop, 0.05); aSet(v.tyreG.gain, Math.pow(c.v / 16, 1.5) * 1.2, 0.08);
   }
   // now and then somebody down there uses the horn
   AU.hornIn -= rdt;
@@ -2208,13 +2208,13 @@ function updateAudio(rdt) {
       const f0 = 330 + Math.random() * 90; let t = AC.currentTime + 0.05;
       for (let b = 0, nb = Math.random() < 0.5 ? 1 : 2; b < nb; b++) {
         const len = 0.18 + Math.random() * 0.5;
-        for (const fq of [f0, f0 * 1.26]) { const o = AC.createOscillator(); o.type = 'square'; o.frequency.value = fq; aShot(o, [[0.012, 0.09 / (1 + d / 40)], [len, 0.08 / (1 + d / 40)], [len + 0.05, 0]], t, lp); }
+        for (const fq of [f0, f0 * 1.26]) { const o = AC.createOscillator(); o.type = 'square'; o.frequency.value = fq; aShot(o, [[0.012, 0.2 / (1 + d / 40)], [len, 0.18 / (1 + d / 40)], [len + 0.05, 0]], t, lp); }
         t += len + 0.12;
       }
     }
   }
   const tk = clamp(1 - nearTrain / 260, 0, 1);
-  aSet(N.train.gain, tk * tk * 0.9 * below, 0.1); aSet(N.trainPan.pan, clamp(nearTrainPan / 60, -1, 1), 0.1);
+  aSet(N.train.gain, tk * tk * 1.5 * below, 0.1); aSet(N.trainPan.pan, clamp(nearTrainPan / 60, -1, 1), 0.1);
 }
 // thunder: sound takes time to arrive. A close strike cracks and tears, a far one only rolls.
 function thunder(dist, amp, panX, strike) {
