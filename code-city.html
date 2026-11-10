@@ -65,7 +65,7 @@ const CELL = 100, ROAD = 24, ASPH = 16;          // road pitch, right-of-way, as
 const CHUNK_CELLS = 2, CHUNK = CELL * CHUNK_CELLS;
 const RC = 6;                                     // chunk radius around the camera
 const FOG_FAR = 1150;                             // everything is fully fogged before the load edge
-const CLOUD_Y = 620, CLOUD_TOP = 930;             // the cloud layer: base and highest tops
+const CLOUD_Y = 620, DECK_TOP = 930, CLOUD_TOP = 1750;   // the clouds: the base, the top of the flat deck, the top of the highest tower
 const MACH = 340;                                 // boost top speed, units (metres) per second
 const CEIL = 3200;                                // flight ceiling
 const FAR_R = 44, FAR_SNAP = 8;                   // far-field radius and re-centre step, in cells
@@ -102,7 +102,7 @@ let SEED = (() => {
 const seedHex = () => SEED.toString(16).toUpperCase().padStart(8, '0');
 
 const GLITCH_NAMES = ['OFF', 'LOW', 'MED', 'HIGH'], GLITCH_GAP = [1e9, 13, 6.5, 2.6];
-const CODE_NAMES = ['LOW', 'MED', 'HIGH'], CODE_MUL = [0.12, 0.35, 1.0];
+const CODE_NAMES = ['LOW', 'MED', 'HIGH'], CODE_MUL = [0.15, 0.45, 1.0];
 const S = { rain: true, traffic: true, glitch: 0, code: 1 };
 
 // smooth value noise over cell coordinates, used for district height and style
@@ -184,7 +184,7 @@ uniform vec4 uWave;                                 // recompile front: directio
 uniform vec4 uBuild;                                // the world being built: centre x, z, radius of the built part, active
 uniform sampler2D uGlyph, uCover, tDepth;
 uniform sampler3D uNoise3;
-const float CLOUD_Y = 620.0, CLOUD_TOP = 930.0;     // the cloud layer
+const float CLOUD_Y = 620.0, CLOUD_TOP = 1750.0;    // the clouds: the base, and the top of the highest tower
 const vec3 MOON_DIR = vec3(0.4082, 0.4082, -0.8165);
 const vec3 C_LAMP = vec3(1.0, 0.55, 0.20);          // sodium street light
 const vec3 C_MOON = vec3(0.62, 0.74, 1.0);          // moonlight
@@ -212,14 +212,19 @@ vec3 skyGrad(float y){
 float built(vec2 p){ return uBuild.w > 0.5 ? uBuild.z - distance(p, uBuild.xy) : 1e6; }
 // the cloud layer, 0..1 without the fine erosion. The ray march, the lights and the script all read this one field.
 float cloudBase(vec3 p, float lod){
-  float h = (p.y - CLOUD_Y) / (CLOUD_TOP - CLOUD_Y);
-  if (h <= 0.0 || h >= 1.0) return 0.0;
+  float y = p.y - CLOUD_Y;
+  if (y <= 0.0 || p.y >= CLOUD_TOP) return 0.0;
   vec2 w = p.xz + uTime * vec2(9.0, 3.5);                                    // wind
-  vec2 cv = texture2D(uCover, w / 16000.0).rg;                               // r = how much cloud, g = how high it builds
-  float cov = smoothstep(0.22, 0.70, cv.r), top = mix(0.30, 1.0, cv.g * cov);
-  float prof = smoothstep(0.0, 0.06, h) * (1.0 - smoothstep(top * 0.35, top, h));
-  float n = mix(texture(uNoise3, vec3(w.x, p.y * 1.3, w.y) / 1500.0).r, 0.6, lod);
-  return clamp((n * prof - (1.0 - cov) * 0.9 - 0.08) * 3.0, 0.0, 1.0);
+  vec2 cv = texture2D(uCover, w / 16000.0).rg;                               // r = how much cloud, g = how thick the deck is
+  float cov = smoothstep(0.22, 0.70, cv.r), deck = mix(150.0, 310.0, cv.g);
+  float tw = smoothstep(0.55, 0.80, texture2D(uCover, w / 5300.0 + 0.37).g) * cov;   // cloud type: 0 = flat deck, 1 = a storm tower (the same map, read smaller)
+  float top = deck + 950.0 * tw;                                             // the top of the cloud here, in metres above the base
+  float prof = smoothstep(0.0, 18.0, y) * (1.0 - smoothstep(top * mix(0.35, 0.5, tw), top, y));   // density over height
+  float inT = tw * smoothstep(deck * 0.7, deck * 1.5, y);                    // how much this point is tower, not deck
+  float need = mix((1.0 - cov) * 0.9 + 0.08, 0.5, inT);                      // what the noise must pass: little in the closed deck, much in a tower, so the noise cuts it into heads
+  if (prof <= need) return 0.0;                                              // no noise can lift this point into cloud
+  float n = texture(uNoise3, vec3(w.x, p.y * 1.3, w.y) / 1500.0).r;
+  return clamp((mix(n, 0.6, lod) * prof - need) * mix(3.0, 2.2, inT), 0.0, 1.0);
 }
 // how much of a light at p reaches the camera through the clouds (a few samples along the way)
 float cloudVis(vec3 p){
@@ -492,7 +497,7 @@ void main(){
     }
     if (dist < 1000.0 && vBd > 200.0) {
       vec2 cr = codeRain(p, fseed, max(codeAmt * uCode, vWv * 0.95), dpx, dpy);
-      emis += (vec3(0.16, 1.0, 0.36) * cr.x * 1.5 + vec3(0.75, 1.0, 0.85) * cr.y * 1.4)
+      emis += (vec3(0.16, 1.0, 0.36) * cr.x * 1.2 + vec3(0.75, 1.0, 0.85) * cr.y * 1.1)
             * (1.0 - smoothstep(700.0, 1000.0, dist)) * (1.0 - 0.65 * win * lit) * (1.0 + 2.0 * vWv);
     }
   }
@@ -699,7 +704,7 @@ void main(){
   float hz = (1.0 - uAbove) * exp(-max(d.y, 0.0) * 4.5) + uAbove * exp(-max(d.y + 0.03, 0.0) * 26.0) * 0.6;
   float disc; vec3 m = moon(d, disc);
   vec3 gal = texture2D(uGalaxy, vec2(atan(d.z, d.x) / 6.2831853 + 0.5, (asin(clamp(d.y, -1.0, 1.0)) * 57.29578 + 6.0) / 96.0)).rgb;   // the Milky Way: azimuth across, elevation -6..90 up
-  vec3 col = nightSky(d.y) + (gal * 0.06 * (1.0 - disc) * mix(0.3, 1.0, uAbove) + m) * (1.0 - hz) * step(-0.02, d.y);
+  vec3 col = nightSky(d.y) + (gal * 0.16 * (1.0 - disc) * mix(0.3, 1.0, uAbove) + m) * (1.0 - hz) * step(-0.02, d.y);
   col = mix(col, skyGrad(d.y), hz * (1.0 - uAbove));
   if (uMirror < 0.0 && d.y > 0.03) {                                          // the wet street mirrors a flat picture of the clouds
     float t = (CLOUD_Y - abs(cameraPosition.y)) / d.y;
@@ -768,8 +773,8 @@ void main(){
   float air = exp(-0.11 / max(position.y + 0.02, 0.02)) / 0.9;                // thick air near the horizon dims a star
   float tw = 1.0 + 0.2 * sin(uRTime * (5.0 + 9.0 * fract(aStar.x * 7.31)) + aStar.y * 90.0) * (1.0 - smoothstep(0.08, 0.6, position.y));   // low stars twinkle
   vec3 c = aStar.y < 0.3 ? mix(vec3(0.68, 0.78, 1.0), vec3(1.0), smoothstep(-0.3, 0.3, aStar.y)) : mix(vec3(1.0), vec3(1.0, 0.72, 0.45), smoothstep(0.3, 1.7, aStar.y));
-  vCol = c * 2.2 * pow(f, 0.8) * air * tw * mix(0.25, 1.0, uAbove) * (1.0 - 0.7 * smoothstep(0.90, 0.995, toMoon));   // faint under the city haze and beside the moon
-  vW = (1.0 + 0.55 * min(pow(f, 0.3), 1.6)) * max(uRes.y / 1080.0, 0.7);      // width in pixels: half a pixel of blur, a little more for a bright star
+  vCol = c * 3.2 * pow(f, 0.72) * air * tw * mix(0.25, 1.0, uAbove) * (1.0 - 0.7 * smoothstep(0.90, 0.995, toMoon));   // faint under the city haze and beside the moon
+  vW = (1.0 + 0.55 * min(pow(f, 0.3), 1.6)) * max(uRes.y / 1080.0, 1.0);      // width in pixels: half a pixel of blur, a little more for a bright star
   gl_PointSize = 4.0 * vW + 1.0;
 }`;
 const STAR_FS = /* glsl */`
@@ -1018,12 +1023,16 @@ const COVER_N = 256, coverData = new Uint8Array(COVER_N * COVER_N * 2);
 }
 // the same cloud field in the script, without the 3D noise: how much cloud there is around a point, 0..1
 function cloudAt(x, y, z) {
-  const h = (y - CLOUD_Y) / (CLOUD_TOP - CLOUD_Y); if (h <= 0 || h >= 1) return 0;
-  const u = (x + worldT * 9) / 16000 * COVER_N - 0.5, v = (z + worldT * 3.5) / 16000 * COVER_N - 0.5, ui = Math.floor(u), vi = Math.floor(v), fu = u - ui, fv = v - vi;
-  const at = (a, b, c) => coverData[((((vi + b) % COVER_N) + COVER_N) % COVER_N * COVER_N + (((ui + a) % COVER_N) + COVER_N) % COVER_N) * 2 + c] / 255;
-  const s = c => lerp(lerp(at(0, 0, c), at(1, 0, c), fu), lerp(at(0, 1, c), at(1, 1, c), fu), fv);
-  const cov = smooth(0.22, 0.70, s(0)), top = lerp(0.30, 1, s(1) * cov), prof = smooth(0, 0.06, h) * (1 - smooth(top * 0.35, top, h));
-  return clamp((0.6 * prof - (1 - cov) * 0.9 - 0.08) * 3, 0, 1);
+  const yy = y - CLOUD_Y; if (yy <= 0 || y >= CLOUD_TOP) return 0;
+  const map = (u, v, c) => {                                    // the coverage map, repeated, with linear filtering
+    u = u * COVER_N - 0.5; v = v * COVER_N - 0.5; const ui = Math.floor(u), vi = Math.floor(v), fu = u - ui, fv = v - vi;
+    const at = (a, b) => coverData[((((vi + b) % COVER_N) + COVER_N) % COVER_N * COVER_N + (((ui + a) % COVER_N) + COVER_N) % COVER_N) * 2 + c] / 255;
+    return lerp(lerp(at(0, 0), at(1, 0), fu), lerp(at(0, 1), at(1, 1), fu), fv);
+  };
+  const wx = x + worldT * 9, wz = z + worldT * 3.5, cov = smooth(0.22, 0.70, map(wx / 16000, wz / 16000, 0)), deck = lerp(150, 310, map(wx / 16000, wz / 16000, 1));
+  const tw = smooth(0.55, 0.80, map(wx / 5300 + 0.37, wz / 5300 + 0.37, 1)) * cov, top = deck + 950 * tw, inT = tw * smooth(deck * 0.7, deck * 1.5, yy);
+  const prof = smooth(0, 18, yy) * (1 - smooth(top * lerp(0.35, 0.5, tw), top, yy)), need = lerp((1 - cov) * 0.9 + 0.08, 0.5, inT);
+  return clamp((0.72 * prof - need) * 4, 0, 1);                 // the 3D noise is taken as a middle value
 }
 
 // ───────────────────────── scene, cameras, shared geometry ─────────────────────────
@@ -1702,6 +1711,7 @@ vec3 grade(vec3 c){
   c = mix(c, c * c * (3.0 - 2.0 * c), 0.45);
   c += vec3(0.0, 0.010, 0.005) * (1.0 - smoothstep(0.0, 0.25, l));
   c = mix(c, vec3(0.80, 1.0, 0.82) * max(max(c.r, c.g), c.b), smoothstep(0.55, 1.0, l) * 0.75);   // highlights burn to a pale green
+  c *= 0.55 + 0.45 * smoothstep(0.0, 0.09, l);                            // the darkest shadows go deeper
   return max(c, 0.0);
 }
 void main(){
@@ -1733,7 +1743,7 @@ const matCloud = new THREE.ShaderMaterial({
   vertexShader: POST_VS, depthTest: false, depthWrite: false, fragmentShader: GL_COMMON + /* glsl */`
 varying vec2 vUv;
 uniform mat4 uInvProj, uCamWorld; uniform vec3 uCamPos; uniform float uJit;
-const float SIGMA = 0.04;                                                  // extinction per metre of full cloud
+const float SIGMA = 0.032;                                                 // extinction per metre of full cloud
 float hg(float c, float g){ float g2 = g * g; return (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * c, 1.5); }
 void main(){
   vec4 f4 = uInvProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
@@ -1742,38 +1752,55 @@ void main(){
   if (z < 0.999999) { vec4 v = uInvProj * vec4(vUv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0); tScene = length(v.xyz / v.w); }
   float iy = 1.0 / (abs(rd.y) < 1e-4 ? (rd.y < 0.0 ? -1e-4 : 1e-4) : rd.y);
   float ta = (CLOUD_Y - ro.y) * iy, tb = (CLOUD_TOP - ro.y) * iy;
-  float t = max(min(ta, tb), 0.0), t1 = min(min(max(ta, tb), tScene), 26000.0);
+  float t = max(min(ta, tb), 0.0), t1 = min(min(max(ta, tb), tScene), 30000.0);
   vec3 col = vec3(0.0); float T = 1.0;
   if (t1 > t) {
-    float mu = dot(rd, MOON_DIR), phase = mix(hg(mu, -0.25), hg(mu, 0.62), 0.5);
-    float cap = (t1 - t) / 30.0;                                           // a short way through the layer still gets enough steps
-    float dt = max(14.0, min(cap, t * 0.06));
-    t += dt * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))) + uJit * 0.618034);
-    for (int i = 0; i < 72; i++) {
+    float mu = dot(rd, MOON_DIR), phase = min(mix(hg(mu, -0.25), hg(mu, 0.62), 0.5), 2.4);
+    float dt = max(24.0, t * 0.03); int fine = 0;                         // long steps through clear air; fine counts down the short steps after cloud
+    t += dt * h21(gl_FragCoord.xy + uJit * 7.31);
+    for (int i = 0; i < 160; i++) {
       if (t >= t1 || T < 0.02) break;
       vec3 p = ro + rd * t;
       float lod = smoothstep(3000.0, 10000.0, t), dens = cloudBase(p, lod);
-      if (dens > 0.0 && t < 6000.0) {                                      // near clouds are eroded by fine noise
-        float e = 0.42 * (1.0 - smoothstep(4000.0, 6000.0, t));
-        dens = clamp((dens - texture(uNoise3, (p + uTime * vec3(11.0, 0.0, 4.0)) / 310.0).g * e) / (1.0 - e), 0.0, 1.0);
+      if (dens > 0.0 && fine == 0) { fine = 6; t -= dt; dt = max(11.0, t * 0.012); t += dt; continue; }  // a long step found cloud: go back and walk in
+      if (dens > 0.0 && t < 7000.0) {                                      // near clouds are eroded by fine noise, towers more than the deck
+        float up = smoothstep(CLOUD_Y + 200.0, CLOUD_Y + 420.0, p.y), e = mix(0.42, 0.5, up) * (1.0 - smoothstep(4500.0, 7000.0, t));
+        vec3 q = p + uTime * vec3(11.0, 0.0, 4.0);
+        float er = texture(uNoise3, q / 310.0).g * 0.7 + texture(uNoise3, q / 97.0 + 0.5).g * 0.3 * (1.0 - smoothstep(600.0, 2500.0, t));
+        dens = clamp((dens - er * e) / (1.0 - e), 0.0, 1.0);
       }
       if (dens > 0.002) {
-        float h = (p.y - CLOUD_Y) / (CLOUD_TOP - CLOUD_Y);
+        float h = clamp((p.y - CLOUD_Y) / 310.0, 0.0, 1.0);
         float od = cloudBase(p + MOON_DIR * 30.0, lod) * 45.0 + cloudBase(p + MOON_DIR * 90.0, lod) * 85.0 + cloudBase(p + MOON_DIR * 210.0, lod) * 160.0 + cloudBase(p + MOON_DIR * 430.0, lod) * 280.0;
-        vec3 S = C_MOON * 0.34 * phase * max(exp(-od * SIGMA), 0.5 * exp(-od * SIGMA * 0.2))      // moonlight, with a little light that scatters deep
+        float pw = mix(1.0, 1.0 - exp(-dens * 4.0), 0.5 * (1.0 - max(mu, 0.0)));                  // thin edges are darker, except against the moon: this draws the folds
+        vec3 S = C_MOON * 0.27 * phase * pw * max(exp(-od * SIGMA), 0.6 * exp(-od * SIGMA * 0.16)) // moonlight, with a little light that scatters deep
                + C_MOON * 0.020 * (0.3 + 0.7 * h)                                                // the sky above
                + C_GLOW * 0.042 * (1.0 - h) * (1.0 - h);                                         // the city below
-        vec3 fp = p - vec3(uFlashPos.x, CLOUD_Y + 90.0, uFlashPos.z); float fd = dot(fp, fp);
-        S += C_FLASH * uFlash * (3.0 * exp(-fd / 2.5e5) + 0.22 * exp(-fd / 6.0e6));              // lightning lights the cloud from inside
+        vec3 fp = p - uFlashPos; float fd = dot(fp, fp);
+        S += C_FLASH * uFlash * (1.7 * exp(-fd / 2.5e5) + 0.22 * exp(-fd / 6.0e6));              // lightning lights the cloud from inside
         S = mix(skyGrad(rd.y), S, exp(-t * uFogDen));                                            // far cloud takes the colour of the air
         float a = 1.0 - exp(-dens * SIGMA * min(dt, t1 - t + dt * 0.5));
         col += T * a * S; T *= 1.0 - a;
-      }
-      dt = max(14.0, min(cap, t * 0.06)); t += dt;
+        fine = 6;
+      } else if (fine > 0) fine--;
+      dt = fine > 0 ? max(11.0, t * 0.012) : max(24.0, t * 0.03); t += dt;
     }
   }
   gl_FragColor = vec4(col, T);
 }` });
+// smooth the clouds over time. The march is noisy, so each frame is blended into the one before it, found again in the last frame's picture
+const matCloudAcc = postMat(/* glsl */`
+uniform sampler2D tCur, tPrev; uniform mat4 uInvProj, uCamWorld, uPrevVP; uniform vec3 uCamPos; uniform float uKeep;
+void main(){
+  vec4 cur = texture2D(tCur, vUv);
+  vec4 f4 = uInvProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+  vec3 rd = normalize(mat3(uCamWorld) * (f4.xyz / f4.w));
+  vec4 pc = uPrevVP * vec4(uCamPos + rd * 2500.0, 1.0);                      // where this direction was in the last frame (clouds are far: about 2.5 km)
+  vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+  float ok = pc.w > 0.0 && puv.x > 0.0 && puv.x < 1.0 && puv.y > 0.0 && puv.y < 1.0 ? uKeep : 0.0;
+  gl_FragColor = mix(cur, texture2D(tPrev, puv), ok);
+}`, { tCur: { value: null }, tPrev: { value: null }, uInvProj: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uPrevVP: { value: new THREE.Matrix4() },
+  uCamPos: { value: new THREE.Vector3() }, uKeep: { value: 0 } });
 // lay the clouds over the scene. Each pixel takes the cloud samples whose depth is like its own, so clouds do not bleed over roof edges
 const matCloudMix = postMat(/* glsl */`
 uniform sampler2D tScene, tCloud, tDepth; uniform vec2 uCloudRes;
@@ -1805,7 +1832,7 @@ void main(){
     uv.x += (n - 0.5) * 0.14 * uTear * step(0.62, h21(vec2(band + 5.0, floor(uTime * 24.0))));
   }
   vec2 c = uv - 0.5; float r2 = dot(c, c);
-  vec2 off = c * (0.002 + uCA) * (0.3 + r2 * 3.2);
+  vec2 off = c * (0.0006 + uCA) * (0.3 + r2 * 3.2);
   vec3 col = vec3(texture2D(tSrc, uv + off).r, texture2D(tSrc, uv).g, texture2D(tSrc, uv - off).b);
   col = mix(col, col * col, uSq);                                          // replayed frames are stored as sqrt
   col *= 1.0 - (0.05 + 0.4 * uScan) * (0.5 + 0.5 * sin(gl_FragCoord.y * 2.0944));
@@ -1814,18 +1841,19 @@ void main(){
   col *= (1.0 - smoothstep(0.22, 0.92, sqrt(r2))) * 0.66 + 0.34;                   // vignette
   col = pow(max(col, 0.0), vec3(1.0 / 2.2));
   float g = h21(floor(gl_FragCoord.xy / 1.5) + fract(uTime) * 91.7) - 0.5;
-  col += g * 0.055 * (1.2 - col.g);                                        // film grain, stronger in the shadows
+  col += g * 0.04 * (1.2 - col.g);                                        // film grain, stronger in the shadows
   gl_FragColor = vec4(col * uFade, 1.0);
 }`, { tSrc: { value: null }, uTime: { value: 0 }, uCA: { value: 0 }, uScan: { value: 0 }, uTear: { value: 0 }, uFade: { value: 0 }, uSq: { value: 0 } });
 
 const BLOOM_LEVELS = 5, RING = 12;
-let rtScene = null, rtCloud = null, rtMain = null, rtRefl = null, rtAcc = [], rtBloom = [], rtRing = [], accIdx = 0, RW = 2, RH = 2;
+let rtScene = null, rtCloud = null, rtCloudAcc = [], cloudIdx = 0, rtMain = null, rtRefl = null, rtAcc = [], rtBloom = [], rtRing = [], accIdx = 0, RW = 2, RH = 2;
 function buildTargets(w, h) {
-  for (const t of [rtScene, rtCloud, rtMain, rtRefl, ...rtAcc, ...rtBloom, ...rtRing]) if (t) t.dispose();
+  for (const t of [rtScene, rtCloud, ...rtCloudAcc, rtMain, rtRefl, ...rtAcc, ...rtBloom, ...rtRing]) if (t) t.dispose();
   const o = { type: HDR, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, stencilBuffer: false };
   const hw = Math.max(2, w >> 1), hh = Math.max(2, h >> 1);
   rtScene = new THREE.WebGLRenderTarget(w, h, Object.assign({}, o, { depthBuffer: true, samples: IS_TOUCH ? 0 : 4, depthTexture: new THREE.DepthTexture(w, h, THREE.FloatType) }));
   rtCloud = new THREE.WebGLRenderTarget(hw, hh, o); rtMain = new THREE.WebGLRenderTarget(w, h, o);
+  rtCloudAcc = [new THREE.WebGLRenderTarget(hw, hh, o), new THREE.WebGLRenderTarget(hw, hh, o)]; matCloudAcc.uniforms.uKeep.value = 0;
   U.tDepth.value = rtScene.depthTexture; matCloudMix.uniforms.uCloudRes.value.set(hw, hh);
   rtRefl = new THREE.WebGLRenderTarget(hw, hh, Object.assign({}, o, { depthBuffer: true }));
   rtAcc = [new THREE.WebGLRenderTarget(w, h, o), new THREE.WebGLRenderTarget(w, h, o)];
@@ -1848,13 +1876,14 @@ function resize() {
   buildTargets(w, h);
 }
 
+const prevCamPos = new THREE.Vector3(); let replayJustEnded = false;
 const replay = { left: 0, i: 0, w: 0, n: 0 };     // deja vu: stored frames play again while the world holds still
 const MIRROR = new THREE.Matrix4().makeScale(1, -1, 1);
 function renderScene() {
   const px = camera.position.x, pz = camera.position.z;
   if (replay.left > 0) {
     matFinal.uniforms.tSrc.value = rtRing[(replay.w + replay.i) % RING].texture; matFinal.uniforms.uSq.value = 1;
-    replay.i = (replay.i + 1) % Math.max(1, replay.n); replay.left--;
+    replay.i = (replay.i + 1) % Math.max(1, replay.n); replay.left--; replayJustEnded = true;
     runPass(matFinal, null); return;
   }
   // 1. mirrored pass for the wet ground
@@ -1879,7 +1908,14 @@ function renderScene() {
   const cl = matCloud.uniforms;
   cl.uInvProj.value.copy(camera.projectionMatrixInverse); cl.uCamWorld.value.copy(camera.matrixWorld); cl.uCamPos.value.copy(camera.position); cl.uJit.value = (cl.uJit.value + 1) % 64;
   runPass(matCloud, rtCloud);
-  matCloudMix.uniforms.tScene.value = rtScene.texture; matCloudMix.uniforms.tCloud.value = rtCloud.texture;
+  const ca = matCloudAcc.uniforms, accNow = rtCloudAcc[cloudIdx], accOld = rtCloudAcc[1 - cloudIdx]; cloudIdx = 1 - cloudIdx;
+  ca.tCur.value = rtCloud.texture; ca.tPrev.value = accOld.texture;
+  ca.uInvProj.value.copy(camera.projectionMatrixInverse); ca.uCamWorld.value.copy(camera.matrixWorld); ca.uCamPos.value.copy(camera.position);
+  if (camera.position.distanceToSquared(prevCamPos) > 250000 || replayJustEnded) ca.uKeep.value = 0;   // a cut: start again
+  runPass(matCloudAcc, accNow);
+  ca.uKeep.value = lerp(0.86, 0.6, clamp(P.speed / 500, 0, 1));              // at speed the history is short, so nothing smears
+  ca.uPrevVP.value.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); prevCamPos.copy(camera.position); replayJustEnded = false;
+  matCloudMix.uniforms.tScene.value = rtScene.texture; matCloudMix.uniforms.tCloud.value = accNow.texture;
   runPass(matCloudMix, rtMain);
   camera.layers.set(1);
   renderer.setRenderTarget(rtMain); renderer.render(scene, camera);
@@ -2078,14 +2114,16 @@ const MOVES = {
     pl.s += pl.dir * 12; pl.y = y0 + 150; plPush(0, 250, 1);
     pl.s += pl.dir * 2; pl.y = Math.max(360, y0 + 260); plPush(0, 350, 1);
     pl.y = CLOUD_Y + 130; plPush(0, 380, 1);
-    pl.s += pl.dir * 60; pl.y = CLOUD_TOP + 500; plPush(0, 420, 1);
-    pl.s += pl.dir * 190; pl.y = CLOUD_TOP + 1250; plPush(0, 260);
-    pl.s += pl.dir * 280; pl.y = CLOUD_TOP + 1560; plPush(0, 120, 0, 1);     // over the top, far above the clouds: the city recompiles below
-    pl.s += pl.dir * 300; pl.y = CLOUD_TOP + 1590; plPush(16, 85);
+    pl.s += pl.dir * 130; pl.y = DECK_TOP + 170; plPush(0, 300, 1);          // out of the deck: level off among the cloud towers,
+    for (let k = 0; k < 5; k++) { pl.s += pl.dir * 330; pl.y = DECK_TOP + 230 + 60 * Math.sin(k * 1.7); pl.wv = -pl.wv; plPush(pl.wv * 60, 230); }   // weave between them and through them
+    pl.s += pl.dir * 260; pl.y = DECK_TOP + 900; plPush(0, 330, 1);
+    pl.s += pl.dir * 200; pl.y = DECK_TOP + 1400; plPush(0, 200);
+    pl.s += pl.dir * 280; pl.y = DECK_TOP + 1560; plPush(0, 120, 0, 1);      // over the top, far above the clouds: the city recompiles below
+    pl.s += pl.dir * 300; pl.y = DECK_TOP + 1590; plPush(16, 85);
   },
   descend() {                                                     // nose over and dive at the grid of lights, as fast as it goes, then level out
-    pl.s += pl.dir * 240; pl.y = CLOUD_TOP + 1400; plPush(0, 170);
-    pl.s += pl.dir * 130; pl.y = CLOUD_TOP + 700; plPush(0, 520, 1);
+    pl.s += pl.dir * 240; pl.y = DECK_TOP + 1400; plPush(0, 170);
+    pl.s += pl.dir * 130; pl.y = DECK_TOP + 700; plPush(0, 520, 1);
     pl.s += pl.dir * 110; pl.y = CLOUD_Y + 20; plPush(0, 640, 1);
     pl.s += pl.dir * 120; pl.y = 330; plPush(0, 420, 1);
     pl.s += pl.dir * 220; pl.y = clamp(flankMin(pl.s) + 30, 60, 240); plPush(0, 170);
@@ -2406,10 +2444,11 @@ function updateFx(rdt) {
   }
   fx.flashT += rdt; fx.nextFlash -= rdt * lerp(1, 0.15, P.slow);
   if (fx.nextFlash <= 0 && started) {
-    fx.nextFlash = (U.uCloud.value > 0.5 ? 2 : 3.5) + Math.random() * 6; fx.flashT = 0; fx.flashAmp = 1.0 + Math.random() * 1.2;
+    const sky = P.pos.y > CLOUD_Y + 100;                          // among the clouds: the flashes are near, inside the towers, and come more often
+    fx.nextFlash = (sky ? 3 : 3.5) + Math.random() * (sky ? 5 : 6); fx.flashT = 0; fx.flashAmp = 1.0 + Math.random() * 1.2;
     const hitAt = P.pos.y < CLOUD_Y - 80 && Math.random() < 0.6 ? pickStrike() : null;
-    const a = Math.random() * TAU, fd = 500 + Math.random() * 2600;
-    let lx = P.pos.x + Math.cos(a) * fd, ly = CLOUD_Y, lz = P.pos.z + Math.sin(a) * fd;
+    const a = Math.random() * TAU, fd = sky ? 500 + Math.random() * 1500 : 500 + Math.random() * 2600;
+    let lx = P.pos.x + Math.cos(a) * fd, ly = sky ? clamp(P.pos.y + (Math.random() - 0.5) * 400, CLOUD_Y + 90, 1400) : CLOUD_Y + 90, lz = P.pos.z + Math.sin(a) * fd;
     fx.bolt = null;
     if (hitAt) { fx.bolt = makeBolt(hitAt[0], hitAt[1], hitAt[2]); lx = fx.bolt.top[0]; lz = fx.bolt.top[2]; fx.flashAmp = 1.7 + Math.random() * 0.8; }
     U.uFlashPos.value.set(lx, ly, lz);
@@ -2542,7 +2581,7 @@ function frame(now) {
   U.uCamVel.value.copy(P.vel).multiplyScalar(vs);
   const alt = P.pos.y;
   U.uCloud.value = damp(U.uCloud.value, cloudAt(P.pos.x, alt, P.pos.z), 5, rdt);          // how deep in cloud the camera is
-  U.uAbove.value = smooth(CLOUD_Y + 60, CLOUD_TOP - 40, alt);
+  U.uAbove.value = smooth(CLOUD_Y + 60, DECK_TOP - 40, alt);
   U.uRainK.value = (1 - smooth(CLOUD_Y - 70, CLOUD_Y + 20, alt)) * (build.on ? smooth(500, 1500, build.r) : 1);   // rain falls from the cloud base, once there is a city to fall on
   U.uFogFar.value = lerp(FOG_FAR, 3900, smooth(140, 900, alt)); U.uFogDen.value = lerp(0.0009, 0.00013, smooth(100, 1100, alt));
   const near = lerp(0.5, 10, smooth(800, 1600, alt));
@@ -2554,7 +2593,7 @@ function frame(now) {
   cu.uTime.value = realT; cu.uSpeedN.value = sn * smooth(0.05, 0.35, sn);
   cu.uTrail.value = 0.55 * P.slow;
   cu.uRot.value.set(clamp(P.yawRate * rdt * 0.5 / (hf * camera.aspect), -0.05, 0.05), clamp(-P.pitchRate * rdt * 0.5 / hf, -0.05, 0.05));
-  fu.uScan.value = fx.scan; fu.uTear.value = fx.tear; fu.uCA.value = fx.ca + 0.004 * P.boost + 0.0015 * P.slow;
+  fu.uScan.value = fx.scan; fu.uTear.value = fx.tear; fu.uCA.value = fx.ca + 0.0012 * P.boost + 0.0015 * P.slow;
   fade = started ? Math.min(1, fade + rdt / 2.4) : 0; fu.uFade.value = fade * fade * (3 - 2 * fade);
   renderScene();
   updateAudio(rdt);
