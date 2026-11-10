@@ -15,7 +15,7 @@ export const BOX_LAYOUT = [['iPos', 3], ['iSize', 3], ['iPar', 4], ['iBld', 3]];
 export const chunks = new Map(), chunkPool = [], buildQueue = [], rebuildQ = [];
 const chunkKey = cellKey;
 let lastCx = 1e9, lastCz = 1e9, steamDirty = true;
-export const steamChanged = () => { steamDirty = true; };   // a part that adds or removes a vent says so
+export const steamChanged = () => { steamDirty = true; };   // a module that adds or removes a vent calls this
 const nearStable = [1, 1, 0, 0];
 
 // The city fold (see foldP in the shaders): the world beyond the line z = hinge bends up and over. angle runs from 0 to PI
