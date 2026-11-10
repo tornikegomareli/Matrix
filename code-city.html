@@ -2309,11 +2309,11 @@ function startAudio() {
   for (let i = 0; i < 1025; i++) curve[i] = Math.tanh((i / 512 - 1) * 1.6) / Math.tanh(1.6) * 0.94;
   clip.curve = curve;
   aChain(master, lpMaster, comp, clip, AC.destination);
-  master.gain.linearRampToValueAtTime(0.6, AC.currentTime + 2.5);
+  master.gain.linearRampToValueAtTime(0.42, AC.currentTime + 2.5);
   noiseBuf = mkNoise(3, false); pinkBuf = mkNoise(5, true);
   const conv = AC.createConvolver(); conv.buffer = mkImpulse(3.2);
   verbIn = aGain(1); aChain(verbIn, conv, aGain(0.55), master);
-  thBus = aFilt('lowpass', 16000); thBus.connect(master); aChain(thBus, aGain(0.6), verbIn);
+  thBus = aFilt('lowpass', 16000); aChain(thBus, aGain(0.85), clip); aChain(thBus, aGain(0.6), verbIn);   // thunder goes around the compressor, so a close strike is far louder than the rain
   // low drone: detuned oscillators through a slowly moving lowpass
   const dl = aFilt('lowpass', 150, 3), dg = aGain(0.13); aChain(dl, dg, master);
   for (const [fq, type] of [[41.2, 'sawtooth'], [41.55, 'sawtooth'], [61.9, 'sine'], [82.7, 'triangle']]) {
@@ -2369,7 +2369,7 @@ function updateAudio(rdt) {
   aSet(N.city.gain, (S.traffic ? 1 : 0.4) * below * 0.32 * (1 - smooth(30, 520, alt)) * (1 - cell.unf));
   aSet(N.hum.gain, cell.unf * 0.22 * (1 - smooth(120, 420, alt)), 0.5);
   aSet(lpMaster.frequency, lerp(18000, 420, P.slow), 0.08);                                     // bullet-time: the world goes underwater
-  aSet(thBus.frequency, lerp(16000, 320, U.uAbove.value), 0.3);                                  // thunder from above the deck is a dull thud
+  aSet(thBus.frequency, Math.min(lerp(16000, 320, U.uAbove.value), lerp(16000, 420, P.slow)), 0.3);   // thunder from above the clouds is a dull thud
   for (const o of droneOscs) aSet(o.detune, -900 * P.slow, 0.12);
   const tk = clamp(1 - nearTrain / 260, 0, 1);
   aSet(N.train.gain, tk * tk * 1.5 * below, 0.1); aSet(N.trainPan.pan, clamp(nearTrainPan / 60, -1, 1), 0.1);
