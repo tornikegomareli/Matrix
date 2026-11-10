@@ -20,9 +20,9 @@
   #hint{position:absolute;left:0;right:0;bottom:18px;text-align:center;padding:0 16px;opacity:.92;transition:opacity 1.6s}
   #hint.fade{opacity:0}
   #intro{position:fixed;inset:0;background:#000;display:flex;align-items:center;justify-content:center;
-    font-size:clamp(18px,2.6vw,30px);transition:opacity 1.9s ease;z-index:5;text-shadow:0 0 12px rgba(57,255,122,.8)}
+    font-size:clamp(26px,5vw,84px);transition:opacity 1.9s ease;z-index:5;text-shadow:0 0 12px rgba(57,255,122,.8)}
   #intro.gone{opacity:0;pointer-events:none}
-  #introbox{width:11ch;white-space:pre}
+  #introbox{width:15ch;white-space:pre}
   #cursor{display:inline-block;width:.6em;height:1.05em;background:#39ff7a;margin-left:.1em;vertical-align:-.16em;
     animation:blink .9s steps(1) infinite;box-shadow:0 0 12px #39ff7a}
   @keyframes blink{50%{opacity:0}}
@@ -2031,15 +2031,17 @@ function stepManual(dt, rdt) {
   const thr = lerp(52, 152, P.boost) * (1 - smooth(CEIL - 500, CEIL, P.pos.y) * 0.7);   // the air gets thin near the ceiling
   let ax = (fx * f + rx * s * 0.8) * thr, ay = (fy * f + up * 0.9) * thr, az = (fz * f + rz * s * 0.8) * thr;
   if (f > 0) { const g = -fy * 11 * f; ax += fx * g; ay += fy * g; az += fz * g; }      // a dive gains speed, a climb costs speed
-  // drag: grows with the square of speed, less when streamlined under boost, with a wall just below Mach 1
-  const cd = lerp(0.0145, 0.0008, P.boost) * (1 + 0.2 * P.boost * Math.exp(-Math.pow((mach - 0.93) / 0.06, 2)));
-  const lin = (f === 0 && s === 0 && up === 0) ? 1.3 : f < 0 ? 1.7 : 0.12;               // no input: settle into a hover. S: air brake
+  // drag: grows with the square of speed, less when streamlined under boost, with a wall just below Mach 1.
+  // The air thins with height: about Mach 1.1 at street level, Mach 2 near the ceiling
+  const rho = lerp(1, Math.exp(-P.pos.y / 2600), P.boost);
+  const cd = lerp(0.0145, 0.0008, P.boost) * (1 + 0.2 * P.boost * Math.exp(-Math.pow((mach - 0.93) / 0.06, 2))) * rho;
+  const lin = (f === 0 && s === 0 && up === 0) ? 1.3 : f < 0 ? 1.7 : 0.12 * rho;         // no input: settle into a hover. S: air brake
   const dk = Math.min(lin + cd * sp, ((f > 0 ? thr : 0) + 95) / Math.max(sp, 1));       // never brake harder than about 10 g
   const ox = v.x, oz = v.z;
   v.x += (ax - v.x * dk) * dt; v.y += (ay - v.y * dk) * dt; v.z += (az - v.z * dk) * dt;
   const sp2 = v.length();
   if (f > 0 && sp2 > 6) {                                          // lift: the velocity follows the nose, slower at high speed
-    const k = (1 - Math.exp(-lerp(3.2, 1.25, smooth(60, 340, sp2)) * dt)) / sp2;
+    const k = (1 - Math.exp(-lerp(3.2, 1.25, smooth(60, 340, sp2)) * lerp(1, 0.6, smooth(340, 700, sp2)) * dt)) / sp2;
     let dx = v.x + (fx * sp2 - v.x) * k * sp2, dy = v.y + (fy * sp2 - v.y) * k * sp2, dz = v.z + (fz * sp2 - v.z) * k * sp2;
     const l = Math.hypot(dx, dy, dz) || 1, keep = sp2 * lerp(1, l / sp2, 0.35) / l;     // a hard turn bleeds a little speed
     v.set(dx * keep, dy * keep, dz * keep);
@@ -2062,7 +2064,7 @@ P._yaw0 = 0; P._pitch0 = 0;
 
 // ───────────────────────── cinematic flight: a spline that stays over the road grid ─────────────────────────
 // The air above every road is always free, so a path made of road-line waypoints cannot hit a building.
-const cine = { pts: [], i: 1, u: 0, v: 60, rnd: null, step: 0, f: new THREE.Vector3(0, 0, -1), right: new THREE.Vector3(1, 0, 0), roll: 0, head: 0 };
+const cine = { pts: [], i: 1, u: 0, v: 60, rnd: null, step: 0, f: new THREE.Vector3(0, 0, -1), right: new THREE.Vector3(1, 0, 0), roll: 0, head: 0, pan: 0, yaw0: 0, y0: 0 };
 const pl = { axis: 0, dir: 1, line: 0, s: 0, y: 100, wv: 1 };     // planner cursor: which road and where along it
 const cPush = (x, y, z, v, b, w) => cine.pts.push({ x, y, z, v, b: b || 0, w: w || 0 });
 const plPush = (lat, v, b, w) => pl.axis === 0 ? cPush(pl.s, pl.y, pl.line * CELL + lat, v, b, w) : cPush(pl.line * CELL + lat, pl.y, pl.s, v, b, w);
@@ -2086,20 +2088,20 @@ function railClear(way) {
 const MOVES = {
   skim(n) {                                                       // roof level, weaving, towers rising on both sides
     for (let k = 0; k < n; k++) {
-      pl.s += pl.dir * 100; pl.y = clamp(clamp(flankMin(pl.s) + 9, 44, 180), pl.y - 70, pl.y + 70); pl.wv = -pl.wv; plPush(pl.wv * 3.5, 90);
+      pl.s += pl.dir * 100; pl.y = clamp(clamp(flankMin(pl.s) + 9, 44, 180), pl.y - 70, pl.y + 70); pl.wv = -pl.wv; plPush(pl.wv * 3.5, 135);
     }
   },
   dive() {
     for (let g = 0; g < 5; g++) {                                 // do not dive through a rail deck: fly on a little first
       const run = Math.max(140, pl.y * 0.95), s0 = pl.s, d = pl.dir;
       if (railClear([[s0, pl.y], [s0 + d * run * 0.32, lerp(12, pl.y, 0.62)], [s0 + d * run * 0.68, lerp(12, pl.y, 0.2)], [s0 + d * run, 12]])) break;
-      pl.s += pl.dir * 50; plPush(0, 88);
+      pl.s += pl.dir * 50; plPush(0, 120);
     }
     const y0 = pl.y, run = Math.max(140, y0 * 0.95);
-    for (const [ds, t] of [[0.32, 0.62], [0.36, 0.2], [0.32, 0]]) { pl.s += pl.dir * run * ds; pl.y = lerp(12, y0, t); plPush(0, 86); }
+    for (const [ds, t] of [[0.32, 0.62], [0.36, 0.2], [0.32, 0]]) { pl.s += pl.dir * run * ds; pl.y = lerp(12, y0, t); plPush(0, 118); }
   },
   canyon(n) {
-    for (let k = 0; k < n; k++) { pl.s += pl.dir * 100; pl.y = clamp(pl.y + (cine.rnd() - 0.5) * 8, 8, 16); pl.wv = -pl.wv; plPush(pl.wv * 4, 70); }
+    for (let k = 0; k < n; k++) { pl.s += pl.dir * 100; pl.y = clamp(pl.y + (cine.rnd() - 0.5) * 8, 8, 16); pl.wv = -pl.wv; plPush(pl.wv * 4, 100); }
   },
   turn() {                                                        // banked 90 degree arc through the next intersection that has no rail
     let k = pl.dir > 0 ? Math.ceil((pl.s + 45) / CELL) : Math.floor((pl.s - 45) / CELL);
@@ -2122,17 +2124,18 @@ const MOVES = {
     pl.s += pl.dir * 30; pl.y = y0 + 48; plPush(0, 130, 1);
     pl.s += pl.dir * 12; pl.y = y0 + 150; plPush(0, 250, 1);
     pl.s += pl.dir * 2; pl.y = Math.max(360, y0 + 260); plPush(0, 350, 1);
-    pl.y = CLOUD_Y + 130; plPush(0, 350, 1);
-    pl.s += pl.dir * 70; pl.y = CLOUD_Y + 430; plPush(0, 210);
-    pl.s += pl.dir * 230; pl.y = CLOUD_Y + 640; plPush(0, 105, 0, 1);        // over the top, above the deck: the city recompiles below
-    pl.s += pl.dir * 300; pl.y = CLOUD_Y + 665; plPush(16, 80);
+    pl.y = CLOUD_Y + 130; plPush(0, 380, 1);
+    pl.s += pl.dir * 60; pl.y = CLOUD_TOP + 500; plPush(0, 420, 1);
+    pl.s += pl.dir * 190; pl.y = CLOUD_TOP + 1250; plPush(0, 260);
+    pl.s += pl.dir * 280; pl.y = CLOUD_TOP + 1560; plPush(0, 120, 0, 1);     // over the top, far above the clouds: the city recompiles below
+    pl.s += pl.dir * 300; pl.y = CLOUD_TOP + 1590; plPush(16, 85);
   },
-  descend() {                                                     // nose over, dive at the grid of lights, level out
-    pl.s += pl.dir * 260; pl.y = CLOUD_Y + 500; plPush(0, 115);
-    pl.s += pl.dir * 200; pl.y = CLOUD_Y + 120; plPush(0, 175);
-    pl.s += pl.dir * 160; pl.y = 420; plPush(0, 170);
-    pl.s += pl.dir * 130; pl.y = 250; plPush(0, 135);
-    pl.s += pl.dir * 130; pl.y = clamp(flankMin(pl.s) + 30, 60, 240); plPush(0, 95);
+  descend() {                                                     // nose over and dive at the grid of lights, as fast as it goes, then level out
+    pl.s += pl.dir * 240; pl.y = CLOUD_TOP + 1400; plPush(0, 170);
+    pl.s += pl.dir * 130; pl.y = CLOUD_TOP + 700; plPush(0, 520, 1);
+    pl.s += pl.dir * 110; pl.y = CLOUD_Y + 20; plPush(0, 640, 1);
+    pl.s += pl.dir * 120; pl.y = 330; plPush(0, 420, 1);
+    pl.s += pl.dir * 220; pl.y = clamp(flankMin(pl.s) + 30, 60, 240); plPush(0, 170);
   },
 };
 const CINE_SEQ = [['skim', 1], ['dive'], ['turn'], ['climb'], ['descend'], ['skim', 3], ['dive'],
@@ -2192,6 +2195,15 @@ function cineAhead(dist, out) {                                   // a point `di
 const _p = new THREE.Vector3(), _q = new THREE.Vector3(), _t = new THREE.Vector3(), _up = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _qr = new THREE.Quaternion(), Z_AXIS = new THREE.Vector3(0, 0, 1), WORLD_UP = new THREE.Vector3(0, 1, 0);
 function stepCine(dt, rdt) {
+  if (cine.pan > 0) {                                             // first look around: one slow turn while rising above the street
+    cine.pan = Math.max(0, cine.pan - rdt / 10);
+    const k = 1 - cine.pan, e = k * k * (3 - 2 * k);
+    P.pos.y = cine.y0 + 70 * e; P.vel.set(0, 0, 0); P.yaw = cine.yaw0 + e * TAU; P.pitch = 0.1 * Math.sin(e * Math.PI) - 0.04; P.roll = 0; P.boost = 0;
+    P.yawRate = damp(P.yawRate, TAU * 6 * k * (1 - k) / 10, 8, rdt); P.pitchRate = 0;
+    camera.position.copy(P.pos); camera.rotation.set(P.pitch, P.yaw, 0, 'YXZ');
+    if (cine.pan === 0) { P.yaw = cine.yaw0; P.pitch = -0.04; startCine(); }
+    return;
+  }
   cineFill();
   const a = cine.pts[cine.i], b = cine.pts[cine.i + 1];
   crEval(cine.i, cine.u, _p); crEval(cine.i, cine.u + 0.02, _q);
@@ -2200,7 +2212,7 @@ function stepCine(dt, rdt) {
   cine.u += cine.v * dt / dPdu;
   while (cine.u >= 1) { cine.u -= 1; cine.i++; if (cine.pts[cine.i].w) startWave(); cineFill(); }
   crEval(cine.i, cine.u, _p);
-  P.vel.copy(_p).sub(P.pos).divideScalar(Math.max(rdt, 1e-4)).clampLength(0, 420);
+  P.vel.copy(_p).sub(P.pos).divideScalar(Math.max(rdt, 1e-4)).clampLength(0, 900);
   P.pos.copy(_p);
   P.boost = damp(P.boost, b.b ? 1 : 0, b.b ? 2.2 : 3, rdt);
   // look a little ahead of the camera, like a chase drone
@@ -2233,10 +2245,11 @@ function stepCine(dt, rdt) {
   camera.quaternion.setFromRotationMatrix(_m.makeBasis(cine.right, _up, _t)).multiply(_qr.setFromAxisAngle(Z_AXIS, cine.roll));
   camera.position.copy(_p);
 }
-function setCine(on) {
+function setCine(on, look) {
   if (on === cineOn) return;
-  cineOn = on;
-  if (on) startCine(); else { P._yaw0 = P.yaw; P._pitch0 = P.pitch; }
+  cineOn = on; cine.pan = 0;
+  if (on && look) { cine.pan = 1; cine.yaw0 = P.yaw; cine.y0 = P.pos.y; }
+  else if (on) startCine(); else { P._yaw0 = P.yaw; P._pitch0 = P.pitch; }
 }
 
 // ───────────────────────── audio: everything is synthesised, silent until the first click ─────────────────────────
@@ -2546,7 +2559,7 @@ function newSeed() {
   try { history.replaceState(null, '', '#seed=' + seedHex()); } catch (e) { /* file:// in some browsers */ }
   resetCity(); placeStart(); resetTraffic(P.pos.x, P.pos.z);
   fx.slots[0] = fx.slots[1] = null; fx.scan = 1; fx.tear = 1; fx.ca = 0.008; chirp(6);
-  if (cineOn) startCine();
+  if (cineOn) { cine.pan = 0; startCine(); }
 }
 
 // ───────────────────────── intro ─────────────────────────
@@ -2554,11 +2567,11 @@ let started = false, fade = 0;
 (async () => {
   const wait = ms => new Promise(r => setTimeout(r, ms)), el = $('typed');
   await wait(900);
-  for (const ch of 'wake up...') { el.textContent += ch; await wait(90 + Math.random() * 110); }
+  for (const ch of 'Wake up now...') { el.textContent += ch; await wait(90 + Math.random() * 110); }
   await wait(1300);
   $('intro').classList.add('gone');
   started = true; fx.nextGlitch = 2.8; fx.force = 'dissolve';
-  if (!MOVE_KEYS.some(k => keys[k])) setCine(true);              // already flying by hand: leave the controls alone
+  if (!MOVE_KEYS.some(k => keys[k])) setCine(true, true);        // already flying by hand: leave the controls alone
   setTimeout(() => $('hint').classList.add('fade'), 5000);
 })();
 
@@ -2628,7 +2641,7 @@ function frame(now) {
   U.uNF.value.set(camera.near, camera.far);
   matRain.uniforms.uRainT.value = rainT; matRain.uniforms.uRainScale.value = lerp(1, 0.012, P.slow);
   matGround.uniforms.uCenter.value.set(Math.round(px / CELL) * CELL, Math.round(pz / CELL) * CELL);
-  const cu = matComp.uniforms, sn = P.speed * vs / MACH, hf = camera.fov * Math.PI / 180;
+  const cu = matComp.uniforms, sn = Math.min(1.7, P.speed * vs / MACH), hf = camera.fov * Math.PI / 180;
   cu.uTime.value = realT; cu.uBoost.value = P.boost * smooth(0.25, 0.9, sn); cu.uSpeedN.value = sn * smooth(0.05, 0.35, sn);
   cu.uShock.value = P.shock; cu.uTrail.value = 0.55 * P.slow;
   cu.uRot.value.set(clamp(P.yawRate * rdt * 0.5 / (hf * camera.aspect), -0.05, 0.05), clamp(-P.pitchRate * rdt * 0.5 / hf, -0.05, 0.05));
