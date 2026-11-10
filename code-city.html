@@ -1698,11 +1698,11 @@ void main(){
 }`, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uGain: { value: 0.9 } },
   { blending: THREE.AdditiveBlending, transparent: true });
 
-// composite: motion blur, bloom, ACES, green grade, trails
+// composite: motion blur, depth of field, bloom, ACES, green grade, trails
 const matComp = postMat(/* glsl */`
 uniform sampler2D tScene, tBloom, tPrev, tDepth;
 uniform vec2 uRes, uRot, uNF;
-uniform float uAspect, uTime, uSpeedN, uTrail, uExposure, uBloom;
+uniform float uAspect, uTime, uSpeedN, uTrail, uExposure, uBloom, uFocus, uAper;
 vec3 aces(vec3 x){ return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 // the look of the film's scenes inside the Matrix: the picture is real, but everything leans to a sick green.
 // Mid tones and highlights go green, reds and blues lose their richness, shadows go deep and green-black.
@@ -1728,6 +1728,22 @@ void main(){
     for (int i = 0; i < 8; i++) col += texture2D(tScene, uv - mv * ((float(i) + j) / 8.0)).rgb;
     col *= 0.125;
   } else col = texture2D(tScene, uv).rgb;
+  if (uAper > 0.0) {                                                      // depth of field: what is off the focus distance spreads into a disc
+    float px = uRes.y / 1080.0, cc = min(uAper * abs(1.0 - uFocus / sd), uAper * 1.6) * px;   // the radius of the disc of this pixel
+    if (cc > 0.6) {
+      vec3 acc = clamp(col, 0.0, 64.0); float ws = 1.0, a0 = h21(gl_FragCoord.xy) * 6.2832;
+      for (int i = 0; i < 24; i++) {
+        float fi = float(i) + 0.5, rr = sqrt(fi / 24.0) * cc, an = fi * 2.39996 + a0;
+        vec2 tuv = uv + vec2(cos(an), sin(an)) * rr / uRes;
+        float zt = texture2D(tDepth, tuv).r, dt = uNF.x * uNF.y / (uNF.y - zt * (uNF.y - uNF.x));
+        float ct = min(uAper * abs(1.0 - uFocus / dt), uAper * 1.6) * px;
+        vec3 tc = clamp(texture2D(tScene, tuv).rgb, 0.0, 64.0);
+        float w = (dt >= sd ? 1.0 : smoothstep(rr - 1.0, rr + 1.0, ct)) * (1.0 + 1.5 * max(tc.g - 1.0, 0.0));   // a sharp thing in front does not smear; lights weigh more
+        acc += tc * w; ws += w;
+      }
+      col = acc / ws;
+    }
+  }
   col = clamp(col, 0.0, 64.0);
   col += texture2D(tBloom, uv).rgb * uBloom;
   col = grade(aces(col * uExposure));
@@ -1736,7 +1752,7 @@ void main(){
 }`, {
   tScene: { value: null }, tBloom: { value: null }, tPrev: { value: null }, tDepth: U.tDepth, uNF: U.uNF, uRes: { value: new THREE.Vector2() }, uRot: { value: new THREE.Vector2() },
   uAspect: { value: 1 }, uTime: { value: 0 }, uSpeedN: { value: 0 }, uTrail: { value: 0 },
-  uExposure: { value: 1.3 }, uBloom: { value: 0.34 },
+  uExposure: { value: 1.3 }, uBloom: { value: 0.34 }, uFocus: { value: 10 }, uAper: { value: 0 },   // uAper: the blur radius of the far distance in pixels at 1080p; 0 = all sharp
 });
 
 // the clouds: a ray march through the layer at half size, stopped by the scene depth. rgb = light gathered, a = what still shows through
