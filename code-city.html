@@ -171,6 +171,7 @@ const U = {
   uAbove: { value: 0 }, uFlashPos: { value: new THREE.Vector3() },
   uNear: { value: new THREE.Vector4() }, uWave: { value: new THREE.Vector4(1, 0, 0, 0) },
   uDark: { value: new THREE.Vector4(0, 1, 0, 0) },
+  uFold: { value: new THREE.Vector4(0, 300, 0, 0) },
   uBuild: { value: new THREE.Vector4() }, uRainK: { value: 1 }, uNF: { value: new THREE.Vector2(0.5, 60000) }, tDepth: { value: null }, uCover: { value: null }, uNoise3: { value: null },
 };
 const mkMat = (vs, fs, extra, opts) => new THREE.ShaderMaterial(Object.assign({
@@ -186,6 +187,7 @@ uniform vec2 uRes, uNF;
 uniform vec4 uWave;                                 // recompile front: direction x, z, position along it, active
 uniform vec4 uBuild;                                // the world being built: centre x, z, radius of the built part, active
 uniform vec4 uDark;                                 // the blackout wave: direction x, z, the place of its front along it, the width of the dark band (0 = no wave)
+uniform vec4 uFold;                                 // the city fold: hinge z, radius, angle now (0 to PI), on
 uniform sampler2D uGlyph, uCover, tDepth;
 uniform sampler3D uNoise3;
 const float CLOUD_Y = 620.0, CLOUD_TOP = 1750.0;    // the clouds: the base, and the top of the highest tower
@@ -223,6 +225,16 @@ float lightsOn(vec2 p, float j){
   if (d < 0.0) return mix(1.0, fl, (d + 40.0) / 40.0 * 0.85);                 // it stutters before it goes out,
   if (d > uDark.w) return mix(fl * 0.7, 1.0, (d - uDark.w) / 70.0);           // and again when it comes back
   return 0.0;
+}
+// the city fold. Beyond the line z = uFold.x the world bends up and over: a pipe of radius uFold.y, then straight on along its tangent.
+// p is the point. sa is the z that decides the angle: p.z itself, or the middle of a thing that must stay rigid. th returns the angle there
+vec3 foldP(vec3 p, float sa, out float th){
+  th = 0.0;
+  float d = sa - uFold.x;
+  if (uFold.w < 0.5 || d <= 0.0) return p;
+  float R = uFold.y; th = min(d / R, uFold.z);
+  float run = d - th * R + (p.z - sa), sn = sin(th), cs = cos(th);            // run: the way along the ground from the point of the curve at th
+  return vec3(p.x, R - R * cs + sn * run + cs * p.y, uFold.x + R * sn + cs * run - sn * p.y);
 }
 // the cloud layer, 0..1 without the fine erosion. The ray march, the lights and the script all read this one field.
 float cloudBase(vec3 p, float lod){
@@ -304,8 +316,13 @@ vec2 codeRain(vec2 p, float seed, float density, vec2 dpx, vec2 dpy){
 }
 `;
 
+// The fold needs two more things in a pair of shaders: the folded position with its angle (vFold),
+// and in the fragment shader the way back for a direction, so that the material keeps working in the frame before the fold.
+const FOLD_V = 'varying vec4 vFold;\n';
+const FOLD_F = FOLD_V + 'vec3 unfold(vec3 v){ float c = cos(vFold.w), s = sin(vFold.w); return vec3(v.x, v.y * c - v.z * s, v.z * c + v.y * s); }\n';
+
 // ───────────────────────── buildings: instanced boxes ─────────────────────────
-const BOX_VS = /* glsl */`
+const BOX_VS = FOLD_V + /* glsl */`
 attribute vec3 iPos; attribute vec3 iSize; attribute vec4 iPar; attribute vec3 iBld;   // iBld = building centre x, z + wave flag
 uniform vec4 uGlitchA, uGlitchB, uNear;
 varying vec3 vWP; varying vec3 vL; varying vec3 vN; varying vec3 vSize; varying vec4 vPar; varying float vG; varying float vWv; varying float vBd;
@@ -338,17 +355,18 @@ void main(){
     wp.z += (h11(band + 7.7) - 0.5) * 3.0 * g * step(0.7, h11(band * 2.3));
   }
   vWP = wp; vL = lp; vN = normal; vSize = iSize; vPar = iPar; vG = g;
-  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+  float th; vec3 fp = foldP(wp, iBld.x > 1e6 ? iPos.z : iBld.y, th); vFold = vec4(fp, th);   // a building folds as one rigid thing
+  gl_Position = projectionMatrix * viewMatrix * vec4(fp, 1.0);
 }`;
 
-const BOX_FS = /* glsl */`
+const BOX_FS = FOLD_F + /* glsl */`
 varying vec3 vWP; varying vec3 vL; varying vec3 vN; varying vec3 vSize; varying vec4 vPar; varying float vG; varying float vWv; varying float vBd;
 void main(){
   bool front = gl_FrontFacing; if (uMirror < 0.0) front = !front;
   bool frame = vBd < 110.0 + 80.0 * h11(vPar.x * 3.3);            // the world is being built and this building is still a bare frame
   if (!front && vG < 0.004 && !frame) discard;
   vec3 n = normalize(vN);
-  vec3 toCam = cameraPosition - vWP; float dist = length(toCam); vec3 V = toCam / dist;
+  vec3 toCam = cameraPosition - vFold.xyz; float dist = length(toCam); vec3 V = unfold(toCam / dist);
   if (frame) {                                                   // edges and floor lines only; it snaps to solid a moment later
     vec2 e2 = vSize.xz * 0.5 - abs(vL.xz);
     float ed = abs(n.y) > 0.5 ? min(e2.x, e2.y) : (abs(n.x) > 0.5 ? e2.y : e2.x);
@@ -356,7 +374,7 @@ void main(){
     float fl = (1.0 - smoothstep(0.0, 0.05 + dist * 0.0014, abs(fract(vWP.y / 9.0) - 0.5) * 9.0)) * (1.0 - smoothstep(250.0, 900.0, dist)) * step(abs(n.y), 0.5);
     float a = max(wire, fl * 0.45);
     if (a < 0.05) discard;
-    gl_FragColor = vec4(applyFog(C_CODE * a * 1.7, vWP), 1.0); return;
+    gl_FragColor = vec4(applyFog(C_CODE * a * 1.7, vFold.xyz), 1.0); return;
   }
   float seed = vPar.x, style = vPar.y, codeAmt = vPar.z, kind = vPar.w;
   float H = vSize.y;
@@ -533,11 +551,11 @@ void main(){
       emis += vec3(0.15, 1.0, 0.35) * 0.25 * vG * (0.5 + 0.5 * sin(uRTime * 40.0));
     }
   }
-  gl_FragColor = vec4(applyFog(col * light + emis, vWP), 1.0);
+  gl_FragColor = vec4(applyFog(col * light + emis, vFold.xyz), 1.0);
 }`;
 
 // ───────────────────────── roof cylinders: tanks, stacks, spires ─────────────────────────
-const CYL_VS = /* glsl */`
+const CYL_VS = FOLD_V + /* glsl */`
 attribute vec3 iPos; attribute vec3 iSize; attribute vec4 iPar; attribute vec3 iBld;
 uniform vec4 uGlitchA, uGlitchB;
 varying vec3 vWP; varying vec3 vN; varying vec4 vPar; varying float vG; varying float vT;
@@ -557,31 +575,33 @@ void main(){
   }
   vWP = wp; vPar = iPar; vG = g; vT = t;
   vN = normalize(vec3(normal.x, normal.y + (1.0 - iPar.y) * iSize.x / iSize.y, normal.z));
-  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+  float th; vec3 fp = foldP(wp, iBld.x > 1e6 ? iPos.z : iBld.y, th); vFold = vec4(fp, th);
+  gl_Position = projectionMatrix * viewMatrix * vec4(fp, 1.0);
 }`;
-const CYL_FS = /* glsl */`
+const CYL_FS = FOLD_F + /* glsl */`
 varying vec3 vWP; varying vec3 vN; varying vec4 vPar; varying float vG; varying float vT;
 void main(){
   bool front = gl_FrontFacing; if (uMirror < 0.0) front = !front;
   if (!front) discard;
   if (vG > 0.004 && h21(vec2(floor(vWP.y * 0.45 + uRTime * 9.0), floor(uRTime * 20.0))) < vG * 1.3) discard;
-  vec3 n = normalize(vN), V = normalize(cameraPosition - vWP);
+  vec3 n = normalize(vN), V = unfold(normalize(cameraPosition - vFold.xyz));
   float fres = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 3.0);
   vec3 col = vec3(0.072, 0.074, 0.080);
   if (vPar.z < 0.5) col *= 0.65 + 0.5 * step(0.5, fract(vT * 5.0));                       // banded water tank
   else if (vPar.z < 1.5) col = vec3(0.09) * (0.6 + 0.6 * step(0.5, fract(vT * 12.0)) * step(0.78, vT)); // striped stack
-  gl_FragColor = vec4(applyFog(col * sceneLight(n, vWP.y) + skyGrad(0.3) * (0.4 + fres * 2.6), vWP), 1.0);
+  gl_FragColor = vec4(applyFog(col * sceneLight(n, vWP.y) + skyGrad(0.3) * (0.4 + fres * 2.6), vFold.xyz), 1.0);
 }`;
 
 // ───────────────────────── wet ground: roads, puddles, ripples, planar reflection ─────────────────────────
-const GROUND_VS = /* glsl */`
+const GROUND_VS = FOLD_V + /* glsl */`
 uniform vec2 uCenter;
 varying vec3 vWP;
 void main(){
   vWP = vec3(position.x * 60000.0 + uCenter.x, 0.0, position.y * 60000.0 + uCenter.y);
-  gl_Position = projectionMatrix * viewMatrix * vec4(vWP, 1.0);
+  float th; vec3 fp = foldP(vWP, vWP.z, th); vFold = vec4(fp, th);
+  gl_Position = projectionMatrix * viewMatrix * vec4(fp, 1.0);
 }`;
-const GROUND_FS = /* glsl */`
+const GROUND_FS = FOLD_F + /* glsl */`
 uniform sampler2D uRefl; uniform float uReflOn, uRainOn, uTraffic;
 varying vec3 vWP;
 const float CELL = 100.0;
@@ -610,7 +630,7 @@ float lampPool(vec2 lat_along, float side, float first){
 }
 void main(){
   vec2 p = vWP.xz;
-  vec3 toCam = cameraPosition - vWP; float dist = length(toCam); vec3 V = toCam / dist;
+  vec3 toCam = cameraPosition - vFold.xyz; float dist = length(toCam); vec3 V = unfold(toCam / dist);
   vec2 q = mod(p + CELL * 0.5, CELL) - CELL * 0.5;
   float ax = abs(q.x), az = abs(q.y), dRoad = min(ax, az);
   float asph = step(dRoad, 8.0), walk = step(dRoad, 12.0) * (1.0 - asph);
@@ -656,7 +676,7 @@ void main(){
   float NdV = clamp(V.y, 0.0, 1.0);
   float F = mix(0.16, 1.0, pow(1.0 - NdV, 3.0)) * gloss;
   vec3 refl = vec3(0.0);
-  if (uReflOn > 0.5) {
+  if (uReflOn > 0.5 && vFold.w < 0.3) {                          // the mirror picture is right only for flat ground
     vec2 suv = gl_FragCoord.xy / uRes + nrm * 0.11 / (1.0 + dist * 0.035);
     float stretch = mix(0.16, 0.012, gloss * gloss);             // rough asphalt smears lights toward the viewer
     float j = h21(gl_FragCoord.xy + fract(uRTime) * 61.0), ws = 0.0;
@@ -665,6 +685,7 @@ void main(){
       refl += texture2D(uRefl, clamp(suv + vec2(0.0, (t - 0.12) * stretch), 0.002, 0.998)).rgb * w; ws += w;
     }
     refl /= ws;
+    refl = mix(refl, envCol(reflect(-V, vec3(0.0, 1.0, 0.0))), smoothstep(0.0, 0.3, vFold.w));
   } else {
     refl = envCol(reflect(-V, vec3(0.0, 1.0, 0.0)));
   }
@@ -680,7 +701,7 @@ void main(){
     float dF = dot(p, uWave.xy) - uWave.z;
     outc += vec3(0.35, 1.0, 0.55) * (exp(-abs(dF) * 0.22) * 2.2 + (dF < 0.0 ? exp(dF / 80.0) * 0.25 * step(0.5, fract(p.x * 0.5) + fract(p.y * 0.5)) : 0.0));
   }
-  gl_FragColor = vec4(applyFog(outc, vWP), 1.0);
+  gl_FragColor = vec4(applyFog(outc, vFold.xyz), 1.0);
 }`;
 
 // ───────────────────────── sky: underlit cloud deck + lightning ─────────────────────────
@@ -749,6 +770,7 @@ void main(){
     c = mix(vec3(1.0, 0.12, 0.08), vec3(0.10, 1.0, 0.55), go); it = mix(2.0, 3.0, go);
   }
   it *= lightsOn(lp.xz, fract(iL.z * 3.7));
+  float th; lp = foldP(lp, iB.x > 1e6 ? iPos.z : iB.y, th);
   vec4 mv = viewMatrix * vec4(lp, 1.0);
   float d = length(mv.xyz);
   mv.xy += position.xy * max(iL.y, d * 0.0024);
@@ -847,6 +869,7 @@ void main(){
   p.y += age * mix(9.0, 16.0, aRnd.z) * sc;
   p.x += (age * age * 5.0 + sin(age * 5.0 + aRnd.w * 6.28) * 0.7) * sc;
   p.z += (age * age * 2.0 + cos(age * 4.0 + aRnd.y * 6.28) * 0.7) * sc;
+  float th; p = foldP(p, aBase.z, th);
   vec4 mv = viewMatrix * vec4(p, 1.0);
   mv.xy += position.xy * mix(0.8, 5.5, sqrt(age)) * sc;
   gl_Position = projectionMatrix * mv;
@@ -870,7 +893,7 @@ attribute vec4 iCar;            // x, z, heading index (0 +x, 1 -x, 2 +z, 3 -z),
 attribute float iCarS;          // brake amount
 vec2 carFwd(float d){ return d < 0.5 ? vec2(1.0, 0.0) : d < 1.5 ? vec2(-1.0, 0.0) : d < 2.5 ? vec2(0.0, 1.0) : vec2(0.0, -1.0); }
 `;
-const CAR_VS = CAR_COMMON + /* glsl */`
+const CAR_VS = FOLD_V + CAR_COMMON + /* glsl */`
 varying vec3 vWP; varying vec3 vN; varying float vSeed; varying float vLY;
 void main(){
   if (built(iCar.xy) < 260.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
@@ -878,34 +901,36 @@ void main(){
   vec3 wp = vec3(iCar.x + fw.x * position.z + rt.x * position.x, position.y, iCar.y + fw.y * position.z + rt.y * position.x);
   vN = vec3(fw.x * normal.z + rt.x * normal.x, normal.y, fw.y * normal.z + rt.y * normal.x);
   vWP = wp; vSeed = iCar.w; vLY = position.y;
-  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+  float th; vec3 fp = foldP(wp, iCar.y, th); vFold = vec4(fp, th);
+  gl_Position = projectionMatrix * viewMatrix * vec4(fp, 1.0);
 }`;
-const CAR_FS = /* glsl */`
+const CAR_FS = FOLD_F + /* glsl */`
 varying vec3 vWP; varying vec3 vN; varying float vSeed; varying float vLY;
 void main(){
   bool front = gl_FrontFacing; if (uMirror < 0.0) front = !front;
   if (!front) discard;
-  vec3 n = normalize(vN), V = normalize(cameraPosition - vWP);
+  vec3 n = normalize(vN), V = unfold(normalize(cameraPosition - vFold.xyz));
   float fres = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 3.0);
   vec3 col = mix(vec3(0.012), mix(vec3(0.050, 0.052, 0.060), vec3(0.075, 0.018, 0.014), step(0.86, fract(vSeed * 7.3))), vSeed) * (vLY > 1.02 ? 0.3 : 1.0);
   vec3 c = col * sceneLight(n, vWP.y) + envCol(reflect(-V, n)) * (0.3 + 3.0 * fres);
-  gl_FragColor = vec4(applyFog(c, vWP), 1.0);
+  gl_FragColor = vec4(applyFog(c, vFold.xyz), 1.0);
 }`;
 const CARL_VS = CAR_COMMON + /* glsl */`
+vec3 unfoldV(vec3 v, float th){ float c = cos(th), s = sin(th); return vec3(v.x, v.y * c - v.z * s, v.z * c + v.y * s); }
 attribute float aPart;          // 0,1 headlights  2,3 taillights  4 beam on the road  5 tail glow on the road
 varying vec2 vUv; varying vec3 vCol; varying float vKind;
 void main(){
   if (built(iCar.xy) < 260.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 fw = carFwd(iCar.z), rt = vec2(-fw.y, fw.x);
   vec3 F = vec3(fw.x, 0.0, fw.y), R = vec3(rt.x, 0.0, rt.y), base = vec3(iCar.x, 0.0, iCar.y);
-  float head = (aPart < 1.5 || (aPart > 3.5 && aPart < 4.5)) ? 1.0 : 0.0;
-  float dc = distance(cameraPosition, base);
+  float head = (aPart < 1.5 || (aPart > 3.5 && aPart < 4.5)) ? 1.0 : 0.0, th;
+  float dc = distance(cameraPosition, foldP(base, iCar.y, th));
   float od = uFogDen * dc + uFogH * exp(-abs(cameraPosition.y) * 0.018) * dc * 0.45;
   float att = exp(-od * 0.75) * (1.0 - smoothstep(330.0, 400.0, dc));
   if (aPart < 3.5) {
     float sgn = mod(aPart, 2.0) < 0.5 ? -1.0 : 1.0;
-    vec3 lp = base + F * (head > 0.5 ? 2.15 : -2.2) + R * 0.62 * sgn + vec3(0.0, 0.68, 0.0);
-    vec3 tc = normalize(cameraPosition - lp);
+    vec3 lp = foldP(base + F * (head > 0.5 ? 2.15 : -2.2) + R * 0.62 * sgn + vec3(0.0, 0.68, 0.0), iCar.y, th);
+    vec3 tc = unfoldV(normalize(cameraPosition - lp), th);
     float vis = smoothstep(-0.15, 0.5, dot(tc.xz, fw) * (head > 0.5 ? 1.0 : -1.0));
     vec4 mv = viewMatrix * vec4(lp, 1.0);
     float size = max(head > 0.5 ? 0.7 + 1.2 * vis : 0.7, length(mv.xyz) * 0.002);
@@ -916,7 +941,7 @@ void main(){
   } else {
     float t = position.y * 0.5 + 0.5;
     vec3 wp = base + F * (head > 0.5 ? mix(1.8, 32.0, t) : mix(-2.2, -9.0, t)) + R * position.x * (head > 0.5 ? 2.2 + 2.6 * t : 1.5);
-    wp.y = 0.05;
+    wp.y = 0.05; wp = foldP(wp, iCar.y, th);
     gl_Position = uMirror < 0.0 ? vec4(2.0, 2.0, 2.0, 1.0) : projectionMatrix * viewMatrix * vec4(wp, 1.0);
     vCol = (head > 0.5 ? vec3(1.0, 0.94, 0.82) * 0.5 : vec3(1.0, 0.12, 0.06) * 0.14 * (0.5 + 1.5 * iCarS)) * att;
     vKind = 1.0;
@@ -938,12 +963,13 @@ const RIB_VS = /* glsl */`
 attribute vec3 iA; attribute vec3 iB; attribute vec4 iW;       // ends, then: width at a, width at b, intensity, type (0 beam, 1 bolt, 2 streak)
 varying vec2 vUv; varying float vI; varying float vType;
 void main(){
-  vec3 a = (viewMatrix * vec4(iA, 1.0)).xyz, b = (viewMatrix * vec4(iB, 1.0)).xyz, mid = mix(a, b, position.y);
+  float th; vec3 wa = foldP(iA, iA.z, th), wb = foldP(iB, iW.w < 0.5 ? iA.z : iB.z, th);                // a beam folds with its foot
+  vec3 a = (viewMatrix * vec4(wa, 1.0)).xyz, b = (viewMatrix * vec4(wb, 1.0)).xyz, mid = mix(a, b, position.y);
   vec3 side = cross(b - a, mid); side /= max(length(side), 1e-5);
   float d = length(mid), w0 = mix(iW.x, iW.y, position.y), w = max(w0, d * 0.0013 * step(0.5, iW.w));
   gl_Position = projectionMatrix * vec4(mid + side * position.x * w, 1.0);
   vUv = vec2(position.x * 2.0, position.y); vType = iW.w;
-  vec3 wp = mix(iA, iB, position.y);
+  vec3 wp = mix(wa, wb, position.y);
   float att = exp(-uFogDen * d * 0.6) * (1.0 - smoothstep(uFogFar * 0.7, uFogFar * 1.25, d)) * cloudVis(wp);
   vI = iW.z * att * w0 / w;
 }`;
@@ -1084,7 +1110,17 @@ function addMesh(geo, mat, order) {
 }
 function fillRandom(attr, rnd) { const a = attr.array; for (let i = 0; i < a.length; i++) a[i] = rnd(); attr.needsUpdate = true; }
 
-const ground = addMesh(new THREE.PlaneGeometry(1, 1), matGround);
+const geoGroundFlat = new THREE.PlaneGeometry(1, 1);
+// the same plane cut into strips across z, fine within 4 km: the fold bends it, and one quad cannot bend
+const geoGroundFold = (() => {
+  const xs = [-30000, -6000, -1500, -400, 0, 400, 1500, 6000, 30000], zs = [-30000, -16000, -8000], pos = [], idx = [];
+  for (let z = -4000; z <= 4000; z += 12.5) zs.push(z);
+  zs.push(8000, 16000, 30000);
+  for (const z of zs) for (const x of xs) pos.push(x / 60000, z / 60000, 0);
+  for (let j = 0; j < zs.length - 1; j++) for (let i = 0; i < xs.length - 1; i++) { const a = j * xs.length + i, b = a + xs.length; idx.push(a, a + 1, b, a + 1, b + 1, b); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); return g;
+})();
+const ground = addMesh(geoGroundFlat, matGround);
 const sky = addMesh(new THREE.IcosahedronGeometry(1, 2), matSky, 5);
 // 5,000 stars of the Yale Bright Star Catalogue, already turned into the frame of this world. 8 bytes each: direction, magnitude, colour index
 const starGeo = new THREE.BufferGeometry();
@@ -1366,13 +1402,22 @@ const chunkKey = cellKey;
 let lastCx = 1e9, lastCz = 1e9, steamDirty = true;
 const nearStable = [1, 1, 0, 0];
 
+// The city fold (see foldP in the shaders): the world beyond the line z = hinge bends up and over. angle runs from 0 to PI
+let foldOn = false;
+function setFold(hinge, radius, angle) {
+  const on = angle > 0.0005;
+  U.uFold.value.set(hinge, radius, angle, on ? 1 : 0);
+  if (on === foldOn) return;
+  foldOn = on; ground.geometry = on ? geoGroundFold : geoGroundFlat;
+  for (const ch of [...chunks.values(), ...chunkPool]) for (const m of ch.meshes) m.frustumCulled = !on;   // a folded chunk is not where its bounds say
+}
 function newChunk() {
   const ch = { cx: 0, cz: 0, cells: [], dual: false, nBody: 0, nProp: 0, nBox: 0, nCyl: 0, nBeacon: 0, nLamp: 0, nLight: 0, c: new THREE.Vector3(), rad: 0, dist: 0 };
   ch.box = addMesh(instGeo(geoBox, BOX_CAP, BOX_LAYOUT), matBox);
   ch.cyl = addMesh(instGeo(geoCyl, CYL_CAP, BOX_LAYOUT), matCyl);
   ch.lights = addMesh(instGeo(geoQuad, LIGHT_CAP, [['iPos', 3], ['iL', 4], ['iB', 3]]), matLight, 11);
   ch.meshes = [ch.box, ch.cyl, ch.lights];
-  for (const m of ch.meshes) m.frustumCulled = true;
+  for (const m of ch.meshes) m.frustumCulled = !foldOn;
   return ch;
 }
 // flag: 0 = always drawn, -1 = old epoch (drawn ahead of the wave front), 1 = new epoch (drawn behind it).
@@ -2577,6 +2622,7 @@ let started = false, fade = 0;
 
 // ───────────────────────── main loop ─────────────────────────
 let timeRate = 1;                                 // the pace of the world: 1 runs, 0 holds still, below 0 runs backwards
+let fogAlt = null;                                // a height to take the fog from, in place of the height of the camera
 let last = performance.now(), worldT = 0, rainT = 0, realT = 0, fpsT = last, fpsN = 0, fps = 60, lowN = 0;
 function frame(now) {
   requestAnimationFrame(frame);
@@ -2635,7 +2681,8 @@ function frame(now) {
   U.uCloud.value = damp(U.uCloud.value, cloudAt(P.pos.x, alt, P.pos.z), 5, rdt);          // how deep in cloud the camera is
   U.uAbove.value = smooth(CLOUD_Y + 60, DECK_TOP - 40, alt);
   U.uRainK.value = (1 - smooth(CLOUD_Y - 70, CLOUD_Y + 20, alt)) * (build.on ? smooth(500, 1500, build.r) : 1);   // rain falls from the cloud base, once there is a city to fall on
-  U.uFogFar.value = lerp(FOG_FAR, 3900, smooth(140, 900, alt)); U.uFogDen.value = lerp(0.0009, 0.00013, smooth(100, 1100, alt));
+  const fa = fogAlt === null ? alt : fogAlt;
+  U.uFogFar.value = lerp(FOG_FAR, 3900, smooth(140, 900, fa)); U.uFogDen.value = lerp(0.0009, 0.00013, smooth(100, 1100, fa));
   const near = lerp(0.5, 10, smooth(800, 1600, alt));
   if (Math.abs(near - camera.near) > 0.01) { camera.near = near; camera.updateProjectionMatrix(); }
   U.uNF.value.set(camera.near, camera.far);
