@@ -3,9 +3,8 @@
 //   film   41 seconds: text on black, digital rain, the city builds itself, a rooftop, the jump, bullet time, a run, the clouds
 //   reel   70 seconds: a look around, the street, a train, the recompile wave, a spire, the sky, the dive from the top
 // A click starts a tour, because a browser plays no sound before one. Esc ends it. After a tour the page flies by itself again.
-// The paths are written for the seed C0DEC17E.
-// The sounds in tour-snd/ are recordings from Wikimedia Commons: keys.mp3 from "Typing - Model M 1986" by Raymangold22 (CC0),
-// drone.mp3 from "MainsBrum50Hz" (public domain).
+// The paths are written for the seed C0DEC17E, and each scene sets the world clock, so the clouds stand where its path expects them.
+// tour-snd/drone.mp3 is a recording from Wikimedia Commons: "MainsBrum50Hz" (public domain).
 (() => {
   const D = window.__tourDef, V = THREE.Vector3;
   const LISTS = { film: [['film', 41.3]], reel: [['city', 26], ['train', 6.8], ['wave', 6.6], ['sky', 30.6]] };
@@ -13,11 +12,12 @@
   if (!list) { console.warn('tour: there is no tour named ' + D.scene); return; }
   if (seedHex() !== 'C0DEC17E') { location.hash = 'seed=C0DEC17E'; location.reload(); return; }
   const M = [0.4082, 0.4082, -0.8165];                              // moon direction (from the sky shader)
-  const pageStep = stepCine, keep = { glitch: S.glitch, code: S.code };
+  const pageStep = stepCine, keep = { glitch: S.glitch };
+  const W0 = { film: 55, city: 0, train: 100, wave: 200, sky: 1090 };   // the world clock at the start of each scene
 
   // ── sounds that only the tours use ──
   const raw = {}, tbuf = {};
-  const fetched = Promise.all(['keys', 'drone'].map(k => fetch('tour-snd/' + k + '.mp3').then(r => r.arrayBuffer()).then(b => { raw[k] = b; })));
+  const fetched = Promise.all(['drone'].map(k => fetch('tour-snd/' + k + '.mp3').then(r => r.arrayBuffer()).then(b => { raw[k] = b; })));
   const play = (name, dest, gain, rate, offset, dur, loop) => {
     const b = tbuf[name]; if (!b) return null;
     const s = AC.createBufferSource(), g = AC.createGain(); s.buffer = b; s.playbackRate.value = rate; g.gain.value = gain;
@@ -31,18 +31,16 @@
   const mk = css => { const e = document.createElement('div'); e.style.cssText = css; document.body.append(e); els.push(e); return e; };
   const fader = mk('position:fixed;inset:0;z-index:19;background:#000;opacity:0;pointer-events:none');
   const TEXT_CSS = `position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font:700 7.5vh ${MONO};color:${GREEN};text-shadow:0 0 2.2vh rgba(57,255,122,.8);white-space:pre;letter-spacing:.06em`;
-  // text typed on black, one letter at a time, with the click of each key
-  const typeText = (el, text, t, t0, dt, rnd) => {
+  // text typed on black, one letter at a time, in silence
+  const typeText = (el, text, t, t0, dt) => {
     const n = clamp(Math.floor((t - t0) / dt) + 1, 0, text.length);
-    for (let i = el._n || 0; i < n; i++) play('keys', AC.destination, 0.5, 0.96 + rnd() * 0.08, (i % 6) * 0.2, 0.19);
-    el._n = n;
     const cur = (n > 0 && n < text.length) || Math.floor(t / 0.45) % 2 === 0;
     el.innerHTML = text.slice(0, n) + `<span style="display:inline-block;width:.6em;height:1.05em;margin-left:.1em;vertical-align:-.16em;background:${GREEN};box-shadow:0 0 2.2vh ${GREEN};opacity:${cur ? 1 : 0}"></span>`;
   };
 
   // ── events ──
-  const flashAt = (lx, lz, y, amp, strike) => {
-    U.uFlashPos.value.set(lx, CLOUD_Y, lz); U.uFlashDir.value.set(lx - P.pos.x, 420, lz - P.pos.z).normalize();
+  const flashAt = (lx, lz, y, amp, strike, hy) => {
+    U.uFlashPos.value.set(lx, hy === undefined ? CLOUD_Y + 90 : hy, lz); U.uFlashDir.value.set(lx - P.pos.x, 420, lz - P.pos.z).normalize();
     fx.flashT = 0; fx.flashAmp = amp; fx.nextFlash = 9 + Math.random() * 6;
     thunder(Math.hypot(lx - P.pos.x, y - P.pos.y, lz - P.pos.z), amp, (lx - P.pos.x) * Math.cos(P.yaw) - (lz - P.pos.z) * Math.sin(P.yaw), strike);
   };
@@ -62,6 +60,7 @@
     fx.bolt = makeBolt(best[0], best[1], best[2]);
     flashAt(fx.bolt.top[0], fx.bolt.top[2], best[1], 2.3, true);
   };
+  const cloudFlash = (x, y, z, amp) => () => { fx.bolt = null; flashAt(x, z, y, amp, false, y); };   // lightning inside a cloud: it glows, with no bolt
   const waveDir = (dx, dz) => () => {
     startWave();
     if (dx !== undefined) { wave.dx = dx; wave.dz = dz; U.uWave.value.x = dx; U.uWave.value.y = dz; }
@@ -74,7 +73,7 @@
     // the film: text on black, the text shatters into digital rain, the camera pushes through it and the city builds itself,
     // a rooftop, the jump, bullet time above the skyline, a fast run through the city, and up through the clouds into silence
     film() {
-      S.code = 2; S.glitch = 0; refreshUI(); unbuilt(500, -900);
+      S.glitch = 0; refreshUI(); unbuilt(500, -900);
       const RX = 513.5, RY = 186, RZ = -368;                          // the roof edge over the street x = 500
       const rnd = mulberry32(0xF11A), TEXT = 'wake up...', GL = 'ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾜ0123456789:.=*+-<>|';
       const ov = mk('position:fixed;inset:0;z-index:20;background:#000;overflow:hidden;pointer-events:none'), tx = document.createElement('div');
@@ -102,10 +101,10 @@
       };
       let rain = null;
       const frame = t => {
-        fx.nextFlash = 99;                                          // no lightning but the strike the film asks for
+        fx.nextFlash = 99;                                          // the lightning of the film is in its script
         keys.KeyF = t >= 23.95 && t < 30;                           // bullet time
         if (t >= 7.4) { ov.style.display = 'none'; return; }
-        if (t < 3.0) { typeText(tx, TEXT, t, 0.9, 0.15, rnd); return; }
+        if (t < 3.0) { typeText(tx, TEXT, t, 0.9, 0.15); return; }
         if (!rain) {
           rain = mkRain(); tx.style.display = 'none';
           const drone = play('drone', master, 0.0001, 0.8, 0.1, 0, 4);        // a low drone fades in: a recording of mains hum, slowed
@@ -151,18 +150,18 @@
           { t: 23.5, p: CITY, w: 0 }, { t: 24.4, p: CITY, w: 1 }, { t: 30.0, p: CITY, w: 1 }, { t: 30.8, p: CITY, w: 0 },
           { t: 37.7, p: [500, 0, -520], w: 0 }, { t: 38.9, p: [500, 0, -520], w: 1 }, { t: 41.5, p: [500, 0, -480], w: 1 }],
         boost: [[21.4, 0], [21.9, 1], [23.7, 1], [24.1, 0], [30.2, 0], [30.9, 1], [34.6, 1], [35.2, 0.6], [35.8, 1], [38.0, 1], [38.8, 0]],
-        ev: [[6.25, () => startBuild(500, -900, 520)], [9.3, strike(120, 320)], [32.55, () => triggerGlitch('dissolve')],
-          [37.7, () => master.gain.setTargetAtTime(0.0001, AC.currentTime, 0.42)]],
+        ev: [[6.25, () => startBuild(500, -900, 520)], [9.3, strike(120, 320)], [12.6, farFlash(1100, 1.5)], [26.3, strike(300, 900)], [33.3, farFlash(500, 1.8)],
+          [37.7, () => master.gain.setTargetAtTime(0.0001, AC.currentTime, 0.42)], [39.0, cloudFlash(250, 760, -900, 1.1)]],
       };
     },
     // the text, the city builds itself, a slow look around while rising over the street with a strike, a dive into the street, then a fast run
     city() {
       fx.nextFlash = 99; unbuilt(500, -850);
-      const rnd = mulberry32(0xC17), ov = mk('position:fixed;inset:0;z-index:20;background:#000;pointer-events:none'), tx = document.createElement('div');
+      const ov = mk('position:fixed;inset:0;z-index:20;background:#000;pointer-events:none'), tx = document.createElement('div');
       tx.style.cssText = TEXT_CSS; ov.append(tx);
       const frame = t => {
         if (t >= 4.6) { ov.style.display = 'none'; return; }
-        typeText(tx, 'Wake up now...', t, 0.5, 0.17, rnd);
+        typeText(tx, 'Wake up now...', t, 0.5, 0.17);
         ov.style.opacity = clamp(1 - (t - 3.4) / 1.1, 0, 1);
       };
       const pos = [[0, 500, 55, -850], [3.5, 500, 57, -850], [8, 500, 100, -850], [12.5, 500, 136, -850], [13.2, 500, 137, -842], [14.3, 500, 124, -790], [15.2, 500, 72, -705],
@@ -194,24 +193,24 @@
       for (const [t, y] of [[-3, 245], [0, 240], [3, 232], [7, 222]]) pos.push([t, 500, y, -690 + 22 * t]);
       return { pos, look: [{ t: 0, p: [500, 170, 200], w: 0.3 }, { t: 7, p: [500, 170, 400], w: 0.3 }], boost: [], ev: [[-0.7, waveDir()]] };
     },
-    // up the side of a spire through the clouds, low over the cloud tops toward the moon, the whole city from 3000 m with a wave crossing it,
-    // then straight down at Mach 2 and out along the roofs
+    // up the side of a spire through the cloud deck, into a cloud tower and out of it toward the moon, the whole city from 3000 m
+    // with a wave crossing it, then straight down at Mach 2 and out along the roofs
     sky() {
       standing();
       const SP = [-250, -750];
       return {
         pos: [[-3, 730, 170, -800], [0, 250, 170, -800], [1.6, -5, 172, -800], [2.3, -110, 190, -800], [2.9, -180, 260, -800], [3.4, -204, 400, -800],
-          [4.0, -208, 600, -800], [4.8, -208, 870, -799], [5.5, -204, 1090, -796], [6.2, -185, 1240, -810], [7.0, -120, 1300, -880],
-          [8.0, -20, 1230, -1080], [9.0, 90, 1100, -1300], [10.0, 205, 1020, -1530], [11.0, 322, 1000, -1765], [12.0, 440, 1010, -2000],
-          [13, 600, 1300, -2180], [14, 800, 1800, -2150], [15, 900, 2400, -1900], [16, 850, 2850, -1500], [17.2, 720, 3050, -1050], [18.5, 620, 3080, -750],
+          [4.0, -208, 600, -800], [4.8, -208, 870, -799], [5.5, -204, 1090, -796], [6.2, -190, 1210, -830], [7.0, -200, 1230, -960],
+          [8.0, -260, 1180, -1190], [9.0, -300, 1150, -1430], [10.0, -250, 1160, -1660], [11.0, -120, 1210, -1880], [12.0, 80, 1290, -2080],
+          [13, 330, 1500, -2230], [14, 600, 1900, -2200], [15, 800, 2450, -1930], [16, 820, 2870, -1520], [17.2, 720, 3050, -1050], [18.5, 620, 3080, -750],
           [20, 580, 3060, -560], [21, 560, 2700, -500], [22, 530, 2050, -440], [23, 510, 1350, -400], [24, 500, 680, -360], [24.7, 500, 330, -300],
           [25.4, 500, 205, -150], [26.4, 500, 185, 130], [27.6, 500, 190, 480], [28.8, 500, 200, 830], [30, 500, 215, 1180], [31.5, 500, 235, 1600]],
         look: [{ t: 2.4, p: [SP[0], 300, SP[1]], w: 0 }, { t: 3.2, p: [SP[0], 520, SP[1]], w: 0.3 }, { t: 4.6, p: [SP[0], 1000, SP[1]], w: 0.35 },
-          { t: 5.6, p: [SP[0], 1150, SP[1]], w: 0.5 }, { t: 6.6, p: [SP[0], 1010, SP[1]], w: 0.8 }, { t: 7.4, p: [SP[0], 1010, SP[1]], w: 0.8 },
-          { t: 8.6, d: M, w: 0.55 }, { t: 11.5, d: M, w: 0.55 }, { t: 12.6, d: M, w: 0 }, { t: 16.5, p: [500, 0, -400], w: 0.5 }, { t: 17.6, p: [500, 0, -400], w: 1 },
+          { t: 5.6, p: [SP[0], 1150, SP[1]], w: 0.5 }, { t: 6.4, p: [SP[0], 1010, SP[1]], w: 0.7 }, { t: 7.0, p: [SP[0], 1010, SP[1]], w: 0.3 },
+          { t: 7.8, d: M, w: 0.3 }, { t: 10.6, d: M, w: 0.45 }, { t: 12.2, d: M, w: 0.6 }, { t: 13.4, d: M, w: 0 }, { t: 16.5, p: [500, 0, -400], w: 0.5 }, { t: 17.6, p: [500, 0, -400], w: 1 },
           { t: 20.4, p: [500, 0, -380], w: 1 }, { t: 21.5, p: [500, 0, -380], w: 0.3 }, { t: 22.5, p: [500, 0, -380], w: 0 }],
-        boost: [[2.2, 0], [2.9, 0.9], [5.3, 0.9], [6.2, 0], [12, 0], [12.8, 1], [16.5, 1], [17.5, 0], [20.2, 0], [20.8, 1], [24.6, 1], [25.6, 0.5], [30, 0.5]],
-        ev: [[9.0, waveDir(0, -1)], [10.3, farFlash(900, 2.2)], [18.3, farFlash(500, 2.2)]],
+        boost: [[2.2, 0], [2.9, 0.9], [5.3, 0.9], [6.2, 0.2], [7.2, 0.6], [10.6, 0.6], [11.6, 0.2], [12.2, 0.2], [12.8, 1], [16.5, 1], [17.5, 0], [20.2, 0], [20.8, 1], [24.6, 1], [25.6, 0.5], [30, 0.5]],
+        ev: [[8.2, cloudFlash(-520, 1100, -1500, 1.4)], [9.0, waveDir(0, -1)], [9.9, cloudFlash(-420, 1250, -2050, 1.3)], [18.3, cloudFlash(-380, 900, -1250, 2.3)], [19.6, cloudFlash(-950, 1000, -2400, 2.0)]],
       };
     },
   };
@@ -250,7 +249,7 @@
     lookPt(L[L.length - 1], p, o); return L[L.length - 1].w;
   };
   const enter = i => {                                              // start scene i of the list
-    li = i; sc = scenes[list[i][0]]();
+    li = i; worldT = W0[list[i][0]]; sc = scenes[list[i][0]]();
     SEGS = Array.isArray(sc.pos[0][0]) ? sc.pos : [sc.pos]; K = SEGS[0]; segI = 0;
     sc.ev.sort((a, b) => a[0] - b[0]);
     st.t = sc.t0 !== undefined ? sc.t0 : -0.9; st.n = 0; st.evi = 0;
@@ -265,7 +264,7 @@
   const finish = () => {                                            // hand the camera back to the page's own cinematic flight
     if (done) return; done = true;
     stepCine = pageStep; removeEventListener('keydown', onKey, true); keys.KeyF = false; cine.pan = 0;
-    S.glitch = keep.glitch; S.code = keep.code; refreshUI(); fx.nextFlash = 5; started = true;
+    S.glitch = keep.glitch; refreshUI(); fx.nextFlash = 5; started = true;
     canvas.style.cursor = ''; $('ui').style.display = ''; $('hint').style.display = ''; $('hint').classList.remove('fade');
     setTimeout(() => $('hint').classList.add('fade'), 6000);
     master.gain.setTargetAtTime(0.42, AC.currentTime, 1.2);
@@ -315,7 +314,7 @@
     P.yawRate = damp(P.yawRate, yr, 8, rdt);
     const pitch = Math.asin(clamp(f.y, -1, 1));
     P.pitchRate = first ? 0 : damp(P.pitchRate, (pitch - P.pitch) / Math.max(rdt, 1e-4), 8, rdt); P.pitch = pitch;
-    st.roll = damp(st.roll, clamp(Math.atan(P.yawRate * v * Math.hypot(f.x, f.z) / 45), -0.9, 0.9), 3.5, rdt); P.roll = st.roll;
+    st.roll = damp(st.roll, clamp(Math.atan(P.yawRate * v * Math.hypot(f.x, f.z) / 45), -0.5, 0.5), 3, rdt); P.roll = st.roll;   // a gentle bank
     back.copy(f).negate();
     camera.quaternion.setFromRotationMatrix(m4.makeBasis(st.right, up, back)).multiply(qr.setFromAxisAngle(Z_AXIS, st.roll));
     camera.position.copy(p);
@@ -331,7 +330,7 @@
   const go = () => {
     if (st.go) return;
     startAudio(); fetched.then(() => { for (const k in raw) AC.decodeAudioData(raw[k]).then(b => { tbuf[k] = b; }); });
-    gate.remove(); st.go = true;
+    gate.remove(); st.go = true; worldT = W0[list[0][0]];          // the wait at the gate does not count
   };
   gate.addEventListener('click', go);
   addEventListener('keydown', onKey, true);
