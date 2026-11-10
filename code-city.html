@@ -1965,9 +1965,10 @@ function buildTargets(w, h) {
   for (const t of rtAcc) { renderer.setRenderTarget(t); renderer.clear(); }
 }
 let quality = 1;
+const PIXELS = (+new URLSearchParams(location.search).get('pixels') || (IS_TOUCH ? 1.0 : 2.3)) * 1e6;   // the most pixels the page renders. ?pixels=8.3 lets a recording render 3840×2160 in full
 function resize() {
   const cw = Math.max(1, innerWidth), ch = Math.max(1, innerHeight), dpr = Math.min(devicePixelRatio || 1, 2);
-  const cap = Math.min(1, Math.sqrt((IS_TOUCH ? 1.0e6 : 2.3e6) / (cw * dpr * ch * dpr)));   // pixel budget
+  const cap = Math.min(1, Math.sqrt(PIXELS / (cw * dpr * ch * dpr)));   // pixel budget
   const w = Math.max(64, Math.round(cw * dpr * cap * quality)), h = Math.max(64, Math.round(ch * dpr * cap * quality));
   renderer.setPixelRatio(1); renderer.setSize(w, h, false);
   camera.aspect = cw / ch; camera.updateProjectionMatrix();
