@@ -172,6 +172,9 @@ const U = {
   uNear: { value: new THREE.Vector4() }, uWave: { value: new THREE.Vector4(1, 0, 0, 0) },
   uDark: { value: new THREE.Vector4(0, 1, 0, 0) },
   uFold: { value: new THREE.Vector4(0, 300, 0, 0) },
+  uPL: { value: [0, 1, 2, 3, 4, 5].map(() => new THREE.Vector4()) }, uPLc: { value: [0, 1, 2, 3, 4, 5].map(() => new THREE.Vector4()) }, uPLn: { value: 0 },
+  uInA: { value: new THREE.Vector3(1e9, 1e9, 1e9) }, uInB: { value: new THREE.Vector3(-1e9, -1e9, -1e9) },
+  uHoleA: { value: [new THREE.Vector3(1e9, 1e9, 1e9), new THREE.Vector3(1e9, 1e9, 1e9)] }, uHoleB: { value: [new THREE.Vector3(-1e9, -1e9, -1e9), new THREE.Vector3(-1e9, -1e9, -1e9)] },
   uBuild: { value: new THREE.Vector4() }, uRainK: { value: 1 }, uNF: { value: new THREE.Vector2(0.5, 60000) }, tDepth: { value: null }, uCover: { value: null }, uNoise3: { value: null },
 };
 const mkMat = (vs, fs, extra, opts) => new THREE.ShaderMaterial(Object.assign({
@@ -188,6 +191,9 @@ uniform vec4 uWave;                                 // recompile front: directio
 uniform vec4 uBuild;                                // the world being built: centre x, z, radius of the built part, active
 uniform vec4 uDark;                                 // the blackout wave: direction x, z, the place of its front along it, the width of the dark band (0 = no wave)
 uniform vec4 uFold;                                 // the city fold: hinge z, radius, angle now (0 to PI), on
+uniform vec4 uPL[6], uPLc[6]; uniform int uPLn;     // local lights: place + reach, colour + zone (0 outdoors, 1 indoors, 2 both)
+uniform vec3 uInA, uInB;                            // the box that counts as indoors: no rain falls in it, and lights of one zone do not reach the other
+uniform vec3 uHoleA[2], uHoleB[2];                  // boxes where the walls of buildings are cut away: a doorway, a hatch
 uniform sampler2D uGlyph, uCover, tDepth;
 uniform sampler3D uNoise3;
 const float CLOUD_Y = 620.0, CLOUD_TOP = 1750.0;    // the clouds: the base, and the top of the highest tower
@@ -235,6 +241,18 @@ vec3 foldP(vec3 p, float sa, out float th){
   float R = uFold.y; th = min(d / R, uFold.z);
   float run = d - th * R + (p.z - sa), sn = sin(th), cs = cos(th);            // run: the way along the ground from the point of the curve at th
   return vec3(p.x, R - R * cs + sn * run + cs * p.y, uFold.x + R * sn + cs * run - sn * p.y);
+}
+bool indoors(vec3 p){ return all(greaterThan(p, uInA)) && all(lessThan(p, uInB)); }
+// the light of the local lamps on a surface at p with the normal n
+vec3 localLight(vec3 p, vec3 n){
+  vec3 sum = vec3(0.0); float ins = uPLn > 0 && indoors(p) ? 1.0 : 0.0;
+  for (int i = 0; i < 6; i++) {
+    if (i >= uPLn) break;
+    if (uPLc[i].w < 1.5 && abs(uPLc[i].w - ins) > 0.5) continue;
+    vec3 d = uPL[i].xyz - p; float r = length(d), a = max(1.0 - r / uPL[i].w, 0.0);
+    sum += uPLc[i].rgb * a * a * max(dot(n, d / max(r, 1e-3)) * 0.8 + 0.2, 0.0);
+  }
+  return sum;
 }
 // the cloud layer, 0..1 without the fine erosion. The ray march, the lights and the script all read this one field.
 float cloudBase(vec3 p, float lod){
@@ -365,6 +383,7 @@ void main(){
   bool front = gl_FrontFacing; if (uMirror < 0.0) front = !front;
   bool frame = vBd < 110.0 + 80.0 * h11(vPar.x * 3.3);            // the world is being built and this building is still a bare frame
   if (!front && vG < 0.004 && !frame) discard;
+  for (int i = 0; i < 2; i++) if (all(greaterThan(vWP, uHoleA[i])) && all(lessThan(vWP, uHoleB[i]))) discard;   // a doorway or a hatch is cut here
   vec3 n = normalize(vN);
   vec3 toCam = cameraPosition - vFold.xyz; float dist = length(toCam); vec3 V = unfold(toCam / dist);
   if (frame) {                                                   // edges and floor lines only; it snaps to solid a moment later
@@ -383,7 +402,7 @@ void main(){
   float u = (xface ? vL.z : vL.x) + faceW * 0.5, v = vL.y;
   float fseed = seed + (xface ? 0.37 : 0.0) + (n.x + n.z > 0.0 ? 0.11 : 0.0);
   float fres = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 4.0);
-  vec3 light = sceneLight(n, vWP.y);
+  vec3 light = sceneLight(n, vWP.y) + localLight(vWP, n);
   vec3 col = vec3(0.05), emis = vec3(0.0);
   float bw = 4.0, fh = 4.0; vec2 f = vec2(0.5);
 
@@ -589,7 +608,7 @@ void main(){
   vec3 col = vec3(0.072, 0.074, 0.080);
   if (vPar.z < 0.5) col *= 0.65 + 0.5 * step(0.5, fract(vT * 5.0));                       // banded water tank
   else if (vPar.z < 1.5) col = vec3(0.09) * (0.6 + 0.6 * step(0.5, fract(vT * 12.0)) * step(0.78, vT)); // striped stack
-  gl_FragColor = vec4(applyFog(col * sceneLight(n, vWP.y) + skyGrad(0.3) * (0.4 + fres * 2.6), vFold.xyz), 1.0);
+  gl_FragColor = vec4(applyFog(col * (sceneLight(n, vWP.y) + localLight(vWP, n)) + skyGrad(0.3) * (0.4 + fres * 2.6), vFold.xyz), 1.0);
 }`;
 
 // ───────────────────────── wet ground: roads, puddles, ripples, planar reflection ─────────────────────────
@@ -665,7 +684,7 @@ void main(){
   float bl = smoothstep(0.0, 200.0, built(p));                  // 0 where the world is not built yet
   pool = mix(pool, 0.06, lodG) * bl * lightsOn(p, 0.5);
   vec3 lamp = C_LAMP;
-  vec3 light = uFogCol * 3.2 + C_GLOW * 0.03 + lamp * pool * 0.62 + C_FLASH * uFlash * (0.2 + 0.8 * uFlashDir.y);
+  vec3 light = uFogCol * 3.2 + C_GLOW * 0.03 + lamp * pool * 0.62 + C_FLASH * uFlash * (0.2 + 0.8 * uFlashDir.y) + localLight(vWP, vec3(0.0, 1.0, 0.0));
 
   // water: puddle mask, ripples, roughness
   float pud = smoothstep(0.44, 0.6, vn(p * 0.085 + 3.0) * 0.65 + vn(p * 0.33 + 9.0) * 0.35);
@@ -834,6 +853,7 @@ void main(){
   float sp = mix(0.85, 1.25, fract(aSeed.w * 7.31));
   vec3 p = aSeed.xyz * B + uRainVel * sp * uRainT;
   p = mod(p - cameraPosition + B * 0.5, B) - B * 0.5 + cameraPosition;      // endless: wrap a box around the camera
+  if (indoors(p)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }       // no rain indoors
   vec3 vel = uRainVel * sp * uRainScale - uCamVel * mix(0.45, 1.0, uBoost);  // what the camera sees (full stretch only under boost)
   vec3 tail = -vel * mix(0.034, 0.06, uBoost);
   float len = length(tail), minLen = mix(0.05, 0.11, uSlow);
@@ -912,7 +932,7 @@ void main(){
   vec3 n = normalize(vN), V = unfold(normalize(cameraPosition - vFold.xyz));
   float fres = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 3.0);
   vec3 col = mix(vec3(0.012), mix(vec3(0.050, 0.052, 0.060), vec3(0.075, 0.018, 0.014), step(0.86, fract(vSeed * 7.3))), vSeed) * (vLY > 1.02 ? 0.3 : 1.0);
-  vec3 c = col * sceneLight(n, vWP.y) + envCol(reflect(-V, n)) * (0.3 + 3.0 * fres);
+  vec3 c = col * (sceneLight(n, vWP.y) + localLight(vWP, n)) + envCol(reflect(-V, n)) * (0.3 + 3.0 * fres);
   gl_FragColor = vec4(applyFog(c, vFold.xyz), 1.0);
 }`;
 const CARL_VS = CAR_COMMON + /* glsl */`
