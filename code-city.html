@@ -1,0 +1,1748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>CODE CITY</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#39ff7a;
+    font:12px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,"Courier New",monospace;
+    -webkit-user-select:none;user-select:none;touch-action:none;letter-spacing:.06em}
+  canvas#gl{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+  #ui{position:fixed;inset:0;pointer-events:none;transition:opacity .35s;text-shadow:0 0 7px rgba(57,255,122,.6)}
+  #ui.hidden{opacity:0}
+  #ui.hidden *{pointer-events:none!important}
+  #stats{position:absolute;left:14px;top:12px;white-space:pre}
+  #toggles{position:absolute;right:14px;top:12px;display:flex;flex-direction:column;gap:4px;align-items:flex-end}
+  #toggles button,#tbtns button{pointer-events:auto;background:rgba(0,14,5,.5);border:1px solid rgba(57,255,122,.35);
+    color:inherit;font:inherit;letter-spacing:inherit;text-shadow:inherit;padding:3px 9px;cursor:pointer;border-radius:0}
+  #toggles button:hover{background:rgba(57,255,122,.16)}
+  #hint{position:absolute;left:0;right:0;bottom:18px;text-align:center;padding:0 16px;opacity:.92;transition:opacity 1.6s}
+  #hint.fade{opacity:0}
+  #intro{position:fixed;inset:0;background:#000;display:flex;align-items:center;justify-content:center;
+    font-size:clamp(18px,2.6vw,30px);transition:opacity 1.9s ease;z-index:5;text-shadow:0 0 12px rgba(57,255,122,.8)}
+  #intro.gone{opacity:0;pointer-events:none}
+  #introbox{width:11ch;white-space:pre}
+  #cursor{display:inline-block;width:.6em;height:1.05em;background:#39ff7a;margin-left:.1em;vertical-align:-.16em;
+    animation:blink .9s steps(1) infinite;box-shadow:0 0 12px #39ff7a}
+  @keyframes blink{50%{opacity:0}}
+  #touch{display:none}
+  .touch #touch{display:block}
+  .touch #hint{bottom:auto;top:12px;left:150px;right:170px}
+  #stick{position:fixed;left:26px;bottom:26px;width:120px;height:120px;border:1px solid rgba(57,255,122,.35);
+    border-radius:50%;pointer-events:auto;background:rgba(0,20,6,.25)}
+  #knob{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px;border-radius:50%;
+    background:rgba(57,255,122,.3);border:1px solid rgba(57,255,122,.6)}
+  #tbtns{position:fixed;right:20px;bottom:30px;display:flex;flex-direction:column;gap:10px}
+  #tbtns button{width:78px;height:44px}
+  #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:9;background:#000;padding:24px;text-align:center}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="ui">
+  <div id="stats"></div>
+  <div id="toggles">
+    <button id="tRain"></button>
+    <button id="tTraffic"></button>
+    <button id="tGlitch"></button>
+    <button id="tCode"></button>
+  </div>
+  <div id="hint">WASD move &middot; MOUSE look (click) &middot; SPACE launch &middot; SHIFT boost &middot; Q/E down/up &middot; F bullet-time &middot; C cinematic &middot; R new seed &middot; H hide UI</div>
+  <div id="touch">
+    <div id="stick"><div id="knob"></div></div>
+    <div id="tbtns"><button id="bBoost">BOOST</button><button id="bTime">TIME</button><button id="bCine">CINE</button></div>
+  </div>
+</div>
+<div id="intro"><div id="introbox"><span id="typed"></span><span id="cursor"></span></div></div>
+<div id="err">This needs WebGL2. Try a current Chrome, Edge, Firefox or Safari.</div>
+
+<script type="module">
+import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js';
+
+// ───────────────────────── constants + helpers ─────────────────────────
+const CELL = 100, ROAD = 24, ASPH = 16;          // road pitch, right-of-way, asphalt width
+const CHUNK_CELLS = 2, CHUNK = CELL * CHUNK_CELLS;
+const RC = 6;                                     // chunk radius around the camera
+const FOG_FAR = 1150;                             // everything is fully fogged before the load edge
+const CLOUD_Y = 620;                              // cloud deck altitude
+const MACH = 340;                                 // boost top speed, units (metres) per second
+const TAU = Math.PI * 2;
+
+const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, x) => { x = clamp((x - a) / (b - a), 0, 1); return x * x * (3 - 2 * x); };
+const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
+const $ = id => document.getElementById(id);
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function hashInt(a, b, c) {
+  let h = Math.imul(a | 0, 0x9E3779B1) ^ Math.imul(b | 0, 0x85EBCA77) ^ Math.imul(c | 0, 0xC2B2AE3D);
+  h ^= h >>> 15; h = Math.imul(h, 0x2C1B3C6D); h ^= h >>> 12; h = Math.imul(h, 0x297A2D39); h ^= h >>> 15;
+  return h >>> 0;
+}
+const hash01 = (a, b, c) => hashInt(a, b, c) / 4294967296;
+
+// ───────────────────────── seed + settings ─────────────────────────
+let SEED = (() => {
+  const m = /seed=([0-9a-f]{1,8})/i.exec(location.hash);
+  return m ? parseInt(m[1], 16) >>> 0 : (Math.random() * 4294967296) >>> 0;
+})();
+const seedHex = () => SEED.toString(16).toUpperCase().padStart(8, '0');
+
+const GLITCH_NAMES = ['OFF', 'LOW', 'MED', 'HIGH'], GLITCH_GAP = [1e9, 13, 6.5, 2.6];
+const CODE_NAMES = ['LOW', 'MED', 'HIGH'], CODE_MUL = [0.45, 1.0, 1.9];
+const S = { rain: true, traffic: true, glitch: 2, code: 1 };
+
+// smooth value noise over cell coordinates, used for district height and style
+function vnoise(x, z, salt) {
+  const xi = Math.floor(x), zi = Math.floor(z);
+  let fx = x - xi, fz = z - zi;
+  fx = fx * fx * (3 - 2 * fx); fz = fz * fz * (3 - 2 * fz);
+  const s = SEED ^ salt;
+  const a = hash01(s, xi, zi), b = hash01(s, xi + 1, zi), c = hash01(s, xi, zi + 1), d = hash01(s, xi + 1, zi + 1);
+  return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
+}
+
+// ───────────────────────── glyph atlas (8x8, mirrored like the film) ─────────────────────────
+function makeGlyphAtlas(maxAniso) {
+  const N = 8, C = 64, cv = document.createElement('canvas');
+  cv.width = cv.height = N * C;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, cv.width, cv.height);
+  const kata = 'ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾜ';
+  const chars = (kata + '0123456789:.=*+-<>|"').slice(0, N * N).padEnd(N * N, '7');
+  g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = '700 46px "Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic","MS Gothic","Noto Sans Mono CJK JP","Noto Sans JP",monospace';
+  for (let i = 0; i < N * N; i++) {
+    const ch = chars[i], cx = (i % N + 0.5) * C, cy = (Math.floor(i / N) + 0.5) * C;
+    const w = Math.max(8, g.measureText(ch).width), sx = clamp(40 / w, 0.7, 1.7);
+    g.save(); g.translate(cx, cy + 2); g.scale(-sx, 1); g.fillText(ch, 0, 0); g.restore();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = true; tex.anisotropy = Math.min(8, maxAniso);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
+// ───────────────────────── renderer + shared uniforms ─────────────────────────
+const canvas = $('gl');
+let renderer = null;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, depth: false, stencil: false, powerPreference: 'high-performance' });
+} catch (e) { /* handled below */ }
+if (!renderer || !renderer.capabilities.isWebGL2) { $('err').style.display = 'flex'; throw new Error('WebGL2 required'); }
+renderer.autoClear = false;
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;   // the final pass encodes
+renderer.toneMapping = THREE.NoToneMapping;               // ACES runs in the composite pass
+const HDR = (renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float'))
+  ? THREE.HalfFloatType : THREE.UnsignedByteType;
+const IS_TOUCH = matchMedia('(pointer: coarse)').matches;
+if (IS_TOUCH) {
+  document.body.classList.add('touch');
+  $('hint').textContent = 'STICK move \u00b7 DRAG look \u00b7 BOOST \u00b7 TIME bullet-time \u00b7 CINE cinematic';
+}
+
+const U = {
+  uTime: { value: 0 }, uRTime: { value: 0 }, uMirror: { value: 1 },
+  uFogCol: { value: new THREE.Vector3(0.010, 0.040, 0.021) },
+  uFogDen: { value: 0.0009 }, uFogH: { value: 0.0022 }, uFogFar: { value: FOG_FAR },
+  uCloud: { value: 0 }, uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0.5, 0.6, 0.3).normalize() },
+  uGlyph: { value: makeGlyphAtlas(renderer.capabilities.getMaxAnisotropy()) },
+  uCode: { value: 1 },
+  uGlitchA: { value: new THREE.Vector4(1e9, 1e9, 0, 0) }, uGlitchB: { value: new THREE.Vector4(1e9, 1e9, 0, 0) },
+  uRes: { value: new THREE.Vector2(1, 1) }, uRefl: { value: null },
+  uCamVel: { value: new THREE.Vector3() }, uBoost: { value: 0 }, uSlow: { value: 0 },
+};
+const mkMat = (vs, fs, extra, opts) => new THREE.ShaderMaterial(Object.assign({
+  uniforms: Object.assign({}, U, extra || {}), vertexShader: GL_COMMON + vs, fragmentShader: GL_COMMON + fs,
+}, opts || {}));
+
+// ───────────────────────── GLSL shared by every scene shader ─────────────────────────
+const GL_COMMON = /* glsl */`
+uniform float uTime, uRTime, uMirror, uFogDen, uFogH, uFogFar, uCloud, uFlash, uCode, uBoost, uSlow;
+uniform vec3 uFogCol, uFlashDir, uCamVel;
+uniform sampler2D uGlyph;
+float h11(float p){ p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
+float h21(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+vec2 h22(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973)); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.xx + p3.yz) * p3.zy); }
+float vn(vec2 p){
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float fbm(vec2 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++) { s += a * vn(p); p = p * 2.03 + 17.1; a *= 0.5; } return s; }
+
+// sky colour by ray height. The horizon equals the fog colour, so the far fade has no seam.
+vec3 skyGrad(float y){
+  vec3 g = mix(uFogCol, uFogCol * 0.30, smoothstep(0.0, 0.75, y));
+  return mix(g, uFogCol * 1.5, uCloud) * (1.0 + uFlash * 1.3);
+}
+vec3 sceneLight(vec3 n, float y){
+  return uFogCol * (1.4 + 2.6 * (n.y * 0.5 + 0.5))
+       + vec3(0.55, 1.0, 0.38) * exp(-max(y, 0.0) / 14.0) * 0.09
+       + vec3(0.75, 1.0, 0.9) * uFlash * (0.2 + 0.8 * max(dot(n, uFlashDir), 0.0));
+}
+// distance fog + ground mist (exponential height fog) + hard fade before the chunk edge
+vec3 applyFog(vec3 col, vec3 wp){
+  vec3 rd = wp - cameraPosition; float d = length(rd); rd /= max(d, 1e-4);
+  const float b = 0.018;
+  float k = rd.y * uMirror * b;
+  float f = abs(k) < 1e-5 ? d : (1.0 - exp(-d * k)) / k;
+  float od = uFogDen * d + uFogH * exp(-abs(cameraPosition.y) * b) * f + uCloud * d * 0.03;
+  float fog = 1.0 - exp(-od);
+  fog = max(fog, smoothstep(uFogFar * 0.68, uFogFar, d));
+  return mix(col, skyGrad(rd.y), fog);
+}
+// one glyph from the 8x8 atlas. cuv is 0..1 inside the cell, gradients are passed in so cell edges do not break mip selection.
+float glyph(vec2 cuv, float idx, vec2 ddx, vec2 ddy){
+  idx = floor(mod(idx, 64.0));
+  vec2 g = vec2(mod(idx, 8.0), floor(idx / 8.0));
+  return textureGrad(uGlyph, (g + clamp(cuv, 0.03, 0.97)) / 8.0, ddx / 8.0, ddy / 8.0).r;
+}
+// falling code on a surface. p = metres (across, down). Returns (brightness, head glyph).
+vec2 codeRain(vec2 p, float seed, float density, vec2 dpx, vec2 dpy){
+  const vec2 gs = vec2(1.3, 1.65);
+  vec2 c = p / gs, id = floor(c), f = fract(c);
+  float h1 = h21(vec2(id.x, seed * 91.7));
+  if (h1 > density) return vec2(0.0);
+  float h2 = h21(vec2(id.x + 3.1, seed * 37.3)), h3 = h21(vec2(id.x * 1.7 + 9.2, seed * 53.9));
+  float len = mix(16.0, 48.0, h2);
+  float t = uTime * mix(5.0, 17.0, h3) + h2 * 97.0;
+  float d = mod(t - id.y, len);                       // rows behind the leading glyph
+  float br = max(0.0, 1.0 - d / mix(8.0, 28.0, h3)); br *= br;
+  float head = step(d, 1.0);
+  float chg = floor(uTime * mix(1.2, 4.5, h21(id + seed)) + h21(id * 1.3 + seed) * 10.0);
+  float gi = floor(h21(id + vec2(chg * 7.13, seed * 13.7)) * 64.0);
+  float g = glyph(vec2(f.x, 1.0 - f.y), gi, vec2(dpx.x, -dpx.y) / gs, vec2(dpy.x, -dpy.y) / gs);
+  return vec2(g * (br * 0.9 + head * 1.5), g * head);
+}
+`;
+
+// ───────────────────────── buildings: instanced boxes ─────────────────────────
+const BOX_VS = /* glsl */`
+attribute vec3 iPos; attribute vec3 iSize; attribute vec4 iPar; attribute vec2 iBld;
+uniform vec4 uGlitchA, uGlitchB;
+varying vec3 vWP; varying vec3 vL; varying vec3 vN; varying vec3 vSize; varying vec4 vPar; varying float vG;
+void main(){
+  vec3 lp = position * iSize;
+  vec3 wp = lp + iPos;
+  float g = 0.0;
+  vec2 da = iBld - uGlitchA.xy, db = iBld - uGlitchB.xy;
+  if (dot(da, da) < 1.0) g = uGlitchA.z;
+  if (dot(db, db) < 1.0) g = max(g, uGlitchB.z);
+  if (g > 0.0) {
+    float band = floor(wp.y * 0.12 + uRTime * 14.0);
+    wp.x += (h11(band + iPar.x * 31.0) - 0.5) * 3.0 * g * step(0.6, h11(band * 1.7));
+    wp.z += (h11(band + 7.7) - 0.5) * 3.0 * g * step(0.7, h11(band * 2.3));
+  }
+  vWP = wp; vL = lp; vN = normal; vSize = iSize; vPar = iPar; vG = g;
+  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+}`;
+
+const BOX_FS = /* glsl */`
+varying vec3 vWP; varying vec3 vL; varying vec3 vN; varying vec3 vSize; varying vec4 vPar; varying float vG;
+void main(){
+  bool front = gl_FrontFacing; if (uMirror < 0.0) front = !front;
+  if (!front && vG < 0.004) discard;
+  vec3 n = normalize(vN);
+  vec3 toCam = cameraPosition - vWP; float dist = length(toCam); vec3 V = toCam / dist;
+  float seed = vPar.x, style = vPar.y, codeAmt = vPar.z, kind = vPar.w;
+  float H = vSize.y;
+  bool roof = n.y > 0.5, xface = abs(n.x) > 0.5;
+  float faceW = xface ? vSize.z : vSize.x;
+  float u = (xface ? vL.z : vL.x) + faceW * 0.5, v = vL.y;
+  float fseed = seed + (xface ? 0.37 : 0.0) + (n.x + n.z > 0.0 ? 0.11 : 0.0);
+  float fres = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 4.0);
+  vec3 light = sceneLight(n, vWP.y);
+  vec3 col = vec3(0.05), emis = vec3(0.0);
+  float bw = 4.0, fh = 4.0; vec2 f = vec2(0.5);
+
+  if (kind > 1.5) {                                   // roof props, poles, antennas
+    col = vec3(0.06, 0.07, 0.062) * (0.6 + 0.8 * vn(vec2(u, v) * 1.3 + seed * 40.0));
+    emis += skyGrad(0.3) * (0.5 + fres * 2.5);
+  } else if (roof) {
+    vec2 hs = vSize.xz * 0.5;
+    float edge = min(hs.x - abs(vL.x), hs.y - abs(vL.z));
+    float par = 1.0 - smoothstep(0.45, 0.6, edge);
+    col = mix(vec3(0.045), vec3(0.11), par) * (0.65 + 0.6 * vn(vWP.xz * 0.9));
+    float pud = smoothstep(0.52, 0.66, vn(vWP.xz * 0.11 + seed * 37.0)) * (1.0 - par);
+    col = mix(col, vec3(0.012), pud);
+    emis += skyGrad(0.5) * pud * (0.9 + 5.0 * fres);
+    vec2 q = abs(fract(vL.xz / 6.0) - 0.5);
+    col *= 0.75 + 0.25 * smoothstep(0.0, 0.03, min(q.x, q.y));
+    f = fract(vL.xz / 4.0);
+  } else {
+    float pod = step(0.5, kind);
+    bool gothic = style > 0.5 && style < 1.5, indus = style > 1.5;
+    fh = mix(mix(3.3, 4.3, h11(seed * 17.3)), 5.2, pod);
+    bw = mix(mix(2.3, 3.9, h11(seed * 29.1)), 5.5, pod);
+    if (gothic && pod < 0.5) { fh *= 1.75; bw *= 1.2; }
+    bw = faceW / max(1.0, floor(faceW / bw + 0.5));
+    fh = H / max(1.0, floor(H / fh + 0.5));
+    vec2 c = vec2(u / bw, v / fh), id = floor(c); f = fract(c);
+    vec2 fw = fwidth(c);
+    float lod = smoothstep(0.22, 0.75, max(fw.x, fw.y));
+    vec2 aa = fw * 1.2 + 0.002;
+    vec2 p = vec2(u, H - v), dpx = dFdx(p), dpy = dFdy(p);
+    float win, pLit; vec3 wall;
+    if (pod > 0.5) {                                  // street-level shopfronts
+      win = smoothstep(0.04, 0.04 + aa.x, f.x) * smoothstep(0.04, 0.04 + aa.x, 1.0 - f.x)
+          * smoothstep(0.08, 0.08 + aa.y, f.y) * smoothstep(0.14, 0.14 + aa.y, 1.0 - f.y);
+      pLit = 0.36; wall = vec3(0.05);
+    } else if (gothic) {                              // stone piers, tall pointed windows, cornices
+      float x = abs(f.x - 0.5), top = 0.9 - x * x * 5.5;
+      win = (1.0 - smoothstep(0.17, 0.17 + aa.x, x)) * smoothstep(0.1, 0.1 + aa.y, f.y) * (1.0 - smoothstep(top, top + aa.y, f.y));
+      pLit = 0.13;
+      wall = mix(vec3(0.04), vec3(0.085), smoothstep(0.36, 0.40, x));
+      wall = mix(wall, vec3(0.12), step(mod(id.y, 5.0), 0.5) * smoothstep(0.84, 0.87, f.y));
+    } else if (indus) {                               // concrete panels, small sparse windows
+      vec2 w2 = abs(f - vec2(0.5, 0.55));
+      win = (1.0 - smoothstep(0.2, 0.2 + aa.x, w2.x)) * (1.0 - smoothstep(0.2, 0.2 + aa.y, w2.y)) * step(0.5, h21(id * 0.7 + fseed * 3.0));
+      pLit = 0.09;
+      float seam = smoothstep(0.0, aa.x + 0.012, min(f.x, 1.0 - f.x)) * smoothstep(0.0, aa.y + 0.012, min(f.y, 1.0 - f.y));
+      wall = vec3(0.06) * (0.6 + 0.4 * seam);
+    } else {                                          // glass curtain wall
+      win = smoothstep(0.05, 0.05 + aa.x, f.x) * smoothstep(0.05, 0.05 + aa.x, 1.0 - f.x)
+          * smoothstep(0.2, 0.2 + aa.y, f.y) * smoothstep(0.05, 0.05 + aa.y, 1.0 - f.y);
+      pLit = 0.2; wall = vec3(0.03, 0.036, 0.034);
+    }
+    wall *= (0.55 + 0.6 * vn(vec2(u * 0.13, v * 0.045) + seed * 50.0)) * (0.8 + 0.25 * vn(vec2(u * 1.7 + seed * 9.0, v * 0.05)));
+    float r1 = h21(id + fseed * 71.3), r2 = h21(vec2(floor(id.x / 3.0), id.y) + fseed * 13.1), r3 = h21(id * 1.7 + fseed * 3.3);
+    float lit = min(1.0, step(r1, pLit * 0.55) + step(r2, pLit * 0.6) * step(r1, 0.75));
+    float wb = mix(0.35, 1.5, r3); wb *= wb;
+    wb *= mix(1.0, 0.5, pod) * (0.72 + 0.28 * step(0.5, fract(f.y * 5.0 + r3 * 9.0) + 0.5 * step(r1, 0.5)))
+        * mix(1.0, 0.75 + 0.25 * step(0.1, fract(f.x * 3.0)), pod);
+    wb *= 1.0 - 0.6 * step(0.94, r3) * step(0.5, fract(uTime * (2.0 + r1 * 7.0)));      // a few faulty tubes
+    vec3 wc = mix(vec3(0.32, 1.0, 0.48), vec3(0.82, 1.0, 0.7), h21(id + fseed * 5.1));
+    vec3 R = reflect(-V, n);
+    vec3 glass = vec3(0.004, 0.007, 0.006) + skyGrad(R.y) * (0.5 + 3.5 * fres);
+    glass += vec3(0.3, 1.0, 0.45) * 0.25 * (1.0 - lod)
+           * step(0.988, h21(floor(vec2(u * 0.8 + (V.x + V.z) * 30.0, v * 0.45 + V.y * 30.0)) + fseed));
+    col = mix(wall, vec3(0.012), win);
+    emis += glass * win;
+    emis += wc * 0.62 * mix(win * lit * wb * (0.55 + 0.45 * smoothstep(0.15, 0.95, f.y)), pLit * 0.55, lod);
+    if (pod < 0.5 && v > H - 0.9 && h11(seed * 3.7) > 0.5) emis += vec3(0.35, 1.0, 0.5) * 1.6;   // crown line
+    if (dist < 1000.0) {
+      vec2 cr = codeRain(p, fseed, codeAmt * uCode, dpx, dpy);
+      emis += (vec3(0.16, 1.0, 0.36) * cr.x * 1.5 + vec3(0.75, 1.0, 0.85) * cr.y * 1.4)
+            * (1.0 - smoothstep(700.0, 1000.0, dist)) * (1.0 - 0.65 * win * lit);
+    }
+  }
+
+  if (vG > 0.004) {                                   // glitch: slices of the building become wireframe + code
+    float band = floor(vWP.y * 0.45 + uRTime * 9.0);
+    bool cut = h21(vec2(band, floor(uRTime * 20.0) + seed * 10.0)) < vG * 1.3;
+    float lx = min(f.x, 1.0 - f.x) * bw, ly = min(f.y, 1.0 - f.y) * fh;
+    float wire = 1.0 - smoothstep(0.0, 0.1 + dist * 0.0018, min(lx, ly));
+    vec2 gp = roof ? vL.xz : vec2(u, H - v);
+    vec2 cg = codeRain(gp, fseed + 0.5, 0.9, dFdx(gp), dFdy(gp));
+    if (cut) {
+      if (wire + cg.x < 0.06) discard;
+      col = vec3(0.0);
+      emis = vec3(0.2, 1.0, 0.4) * (wire * 1.6 + cg.x * 2.2) + vec3(0.8, 1.0, 0.85) * cg.y * 2.0;
+    } else {
+      if (!front) discard;
+      emis += vec3(0.15, 1.0, 0.35) * 0.25 * vG * (0.5 + 0.5 * sin(uRTime * 40.0));
+    }
+  }
+  gl_FragColor = vec4(applyFog(col * light + emis, vWP), 1.0);
+}`;
+
+// ───────────────────────── roof cylinders: tanks, stacks, spires ─────────────────────────
+const CYL_VS = /* glsl */`
+attribute vec3 iPos; attribute vec3 iSize; attribute vec4 iPar; attribute vec2 iBld;
+uniform vec4 uGlitchA, uGlitchB;
+varying vec3 vWP; varying vec3 vN; varying vec4 vPar; varying float vG; varying float vT;
+void main(){
+  float t = position.y, r = mix(1.0, iPar.y, t);
+  vec3 wp = vec3(position.x * iSize.x * r, t * iSize.y, position.z * iSize.z * r) + iPos;
+  vec2 da = iBld - uGlitchA.xy, db = iBld - uGlitchB.xy;
+  float g = 0.0;
+  if (dot(da, da) < 1.0) g = uGlitchA.z;
+  if (dot(db, db) < 1.0) g = max(g, uGlitchB.z);
+  vWP = wp; vPar = iPar; vG = g; vT = t;
+  vN = normalize(vec3(normal.x, normal.y + (1.0 - iPar.y) * iSize.x / iSize.y, normal.z));
+  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+}`;
+const CYL_FS = /* glsl */`
+varying vec3 vWP; varying vec3 vN; varying vec4 vPar; varying float vG; varying float vT;
+void main(){
+  bool front = gl_FrontFacing; if (uMirror < 0.0) front = !front;
+  if (!front) discard;
+  if (vG > 0.004 && h21(vec2(floor(vWP.y * 0.45 + uRTime * 9.0), floor(uRTime * 20.0))) < vG * 1.3) discard;
+  vec3 n = normalize(vN), V = normalize(cameraPosition - vWP);
+  float fres = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 3.0);
+  vec3 col = vec3(0.07, 0.08, 0.072);
+  if (vPar.z < 0.5) col *= 0.65 + 0.5 * step(0.5, fract(vT * 5.0));                       // banded water tank
+  else if (vPar.z < 1.5) col = vec3(0.09) * (0.6 + 0.6 * step(0.5, fract(vT * 12.0)) * step(0.78, vT)); // striped stack
+  gl_FragColor = vec4(applyFog(col * sceneLight(n, vWP.y) + skyGrad(0.3) * (0.4 + fres * 2.6), vWP), 1.0);
+}`;
+
+// ───────────────────────── wet ground: roads, puddles, ripples, planar reflection ─────────────────────────
+const GROUND_VS = /* glsl */`
+uniform vec2 uCenter;
+varying vec3 vWP;
+void main(){
+  vWP = vec3(position.x * 2800.0 + uCenter.x, 0.0, position.y * 2800.0 + uCenter.y);
+  gl_Position = projectionMatrix * viewMatrix * vec4(vWP, 1.0);
+}`;
+const GROUND_FS = /* glsl */`
+uniform sampler2D uRefl; uniform vec2 uRes; uniform float uReflOn, uRainOn;
+varying vec3 vWP;
+const float CELL = 100.0;
+// one expanding ring per grid cell
+vec2 rip(vec2 p, float t, float sc, float off){
+  p = p * sc + off; vec2 id = floor(p), f = fract(p) - 0.5;
+  vec2 rnd = h22(id + off);
+  float tt = t * (0.7 + rnd.x * 0.7) + rnd.y, ph = fract(tt);
+  vec2 cc = (h22(id + floor(tt) * 0.37 + 3.1) - 0.5) * 0.4;
+  vec2 dv = f - cc; float d = length(dv), r = ph * 0.42;
+  return dv / max(d, 1e-3) * sin((d - r) * 42.0) * (1.0 - smoothstep(0.0, 0.07, abs(d - r))) * (1.0 - ph);
+}
+// paint for one road. a = distance from its centreline, s = along it, o = distance from the crossing road's centreline
+float marks(float a, float s, float o){
+  if (o < 12.5 || a > 7.9) return 0.0;
+  float m = step(abs(a - 0.22), 0.07) + step(abs(a - 4.0), 0.07) * step(fract(s / 9.0), 0.42);
+  m += step(abs(o - 14.6), 1.5) * step(fract(a / 1.3), 0.5);     // zebra crossing
+  m += step(abs(o - 17.3), 0.22);                                // stop line
+  return min(m, 1.0);
+}
+float lampPool(vec2 lat_along, float side, float first){
+  float zl = first + 50.0 * floor((lat_along.y - first) / 50.0 + 0.5);
+  vec2 d = vec2(lat_along.x - side * 6.5, lat_along.y - zl);
+  float k = 1.0 + dot(d, d) * 0.016;
+  return 1.0 / (k * k);
+}
+void main(){
+  vec2 p = vWP.xz;
+  vec3 toCam = cameraPosition - vWP; float dist = length(toCam); vec3 V = toCam / dist;
+  vec2 q = mod(p + CELL * 0.5, CELL) - CELL * 0.5;
+  float ax = abs(q.x), az = abs(q.y), dRoad = min(ax, az);
+  float asph = step(dRoad, 8.0), walk = step(dRoad, 12.0) * (1.0 - asph);
+  float n1 = vn(p * 2.3), n2 = vn(p * 0.21 + 11.0);
+  vec3 col = vec3(0.017) * (0.6 + 0.7 * n1) * (0.7 + 0.5 * n2);
+  if (asph > 0.5) {
+    float m = max(marks(ax, p.y, az) * step(ax, 8.0), marks(az, p.x, ax) * step(az, 8.0));
+    col += vec3(0.16, 0.18, 0.15) * m * (0.35 + 0.65 * n1) * (1.0 - smoothstep(50.0, 260.0, dist));
+  } else if (walk > 0.5) {
+    vec2 sl = abs(fract(p / 2.0) - 0.5);
+    col = vec3(0.04) * (0.7 + 0.4 * n1) * (0.8 + 0.2 * smoothstep(0.0, 0.04, min(sl.x, sl.y)));
+    col += vec3(0.03) * (1.0 - smoothstep(8.0, 8.5, dRoad));            // kerb
+  } else {
+    col = vec3(0.022) * (0.7 + 0.5 * n1);
+  }
+  // street lamps (two per side per block, staggered)
+  float pool = 0.0;
+  if (ax < 20.0) pool += lampPool(vec2(q.x, p.y), 1.0, 12.5) + lampPool(vec2(q.x, p.y), -1.0, 37.5);
+  if (az < 20.0) pool += lampPool(vec2(q.y, p.x), 1.0, 12.5) + lampPool(vec2(q.y, p.x), -1.0, 37.5);
+  vec3 lamp = vec3(0.55, 1.0, 0.38);
+  vec3 light = uFogCol * 4.0 + lamp * pool * 0.55 + vec3(0.75, 1.0, 0.9) * uFlash * (0.2 + 0.8 * uFlashDir.y);
+
+  // water: puddle mask, ripples, roughness
+  float pud = smoothstep(0.44, 0.6, vn(p * 0.085 + 3.0) * 0.65 + vn(p * 0.33 + 9.0) * 0.35);
+  float gloss = mix(mix(0.3, 0.5, asph), 1.0, pud);
+  vec2 nrm = (vec2(vn(p * 1.9 + 7.0), vn(p * 1.9 + 91.0)) - 0.5) * (1.0 - gloss) * 0.5;
+  float near = 1.0 - smoothstep(30.0, 120.0, dist);
+  if (near > 0.0 && uRainOn > 0.5) nrm += (rip(p, uTime, 1.3, 0.0) + rip(p, uTime * 1.13, 0.9, 31.7)) * near * (0.2 + 0.4 * pud);
+  float NdV = clamp(V.y, 0.0, 1.0);
+  float F = mix(0.16, 1.0, pow(1.0 - NdV, 3.0)) * gloss;
+  vec3 refl = vec3(0.0);
+  if (uReflOn > 0.5) {
+    vec2 suv = gl_FragCoord.xy / uRes + nrm * 0.11 / (1.0 + dist * 0.035);
+    float stretch = mix(0.16, 0.012, gloss * gloss);             // rough asphalt smears lights toward the viewer
+    float j = h21(gl_FragCoord.xy + fract(uRTime) * 61.0), ws = 0.0;
+    for (int i = 0; i < 7; i++) {
+      float t = (float(i) + j) / 7.0, w = 1.0 - t * 0.8;
+      refl += texture2D(uRefl, clamp(suv + vec2(0.0, (t - 0.12) * stretch), 0.002, 0.998)).rgb * w; ws += w;
+    }
+    refl /= ws;
+  } else {
+    refl = skyGrad(0.4);
+  }
+  vec3 outc = col * light * (1.0 - 0.5 * pud) + refl * F;
+  outc += lamp * pool * 0.25 * gloss * dot(nrm, nrm) * 10.0;     // ripple glints under the lamps
+  gl_FragColor = vec4(applyFog(outc, vWP), 1.0);
+}`;
+
+// ───────────────────────── sky: underlit cloud deck + lightning ─────────────────────────
+const SKY_VS = /* glsl */`
+varying vec3 vDir;
+void main(){
+  vDir = position;
+  vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0);
+  gl_Position = p.xyww;
+}`;
+const SKY_FS = /* glsl */`
+varying vec3 vDir;
+void main(){
+  vec3 d = normalize(vDir);
+  vec3 col = skyGrad(d.y);
+  vec2 cuv = d.xz / (abs(d.y) + 0.22) * 1.4 + cameraPosition.xz * 0.0006 + uTime * vec2(0.012, 0.004);
+  float c = smoothstep(0.35, 0.8, fbm(cuv * 1.5) * 0.75 + fbm(cuv * 4.0 + 5.0) * 0.25);
+  float mask = smoothstep(0.02, 0.35, d.y) * (1.0 - uCloud);
+  col = mix(col, mix(uFogCol * 0.22, uFogCol * vec3(2.5, 3.0, 2.4), c), mask * 0.85);
+  vec3 fd = normalize(vec3(uFlashDir.x, 0.35, uFlashDir.z));
+  col += vec3(0.6, 1.0, 0.75) * uFlash * (0.12 + 1.3 * c * exp(-3.0 * distance(d, fd))) * mask;
+  col *= max(0.35, 1.0 + uCloud * (fbm(d.xz * 5.0 + d.y * 2.0 + vec2(cameraPosition.y * 0.03, uTime * 0.5)) - 0.47) * 3.2);   // wisps inside the deck
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
+// ───────────────────────── light sprites: lamps, beacons, traffic signals ─────────────────────────
+const LIGHT_VS = /* glsl */`
+attribute vec3 iPos; attribute vec4 iL;        // iL = type, size, phase, axis
+varying vec2 vUv; varying vec3 vCol;
+void main(){
+  vec3 c; float it;
+  if (iL.x < 0.5) { c = vec3(0.55, 1.0, 0.38); it = 1.7; }                                             // sodium lamp, gone green
+  else if (iL.x < 1.5) { c = vec3(0.7, 1.0, 0.8); it = 0.2 + 7.0 * step(0.84, fract(uTime * 0.55 + iL.z)); }  // strobe
+  else if (iL.x < 2.5) { float b = 0.5 + 0.5 * sin(uTime * 1.6 + iL.z * 6.2832); c = vec3(1.0, 0.16, 0.1); it = 5.0 * b * b; } // red beacon
+  else {                                                                                               // signal, same cycle as the traffic sim
+    float ph = fract(iL.z + uTime / 18.0);
+    float go = iL.w < 0.5 ? step(ph, 0.45) : step(0.5, ph) * step(ph, 0.95);
+    c = mix(vec3(1.0, 0.12, 0.08), vec3(0.2, 1.0, 0.45), go); it = mix(2.0, 3.0, go);
+  }
+  vec4 mv = viewMatrix * vec4(iPos, 1.0);
+  float d = length(mv.xyz);
+  mv.xy += position.xy * max(iL.y, d * 0.0024);
+  gl_Position = projectionMatrix * mv;
+  float od = uFogDen * d + uFogH * exp(-abs(cameraPosition.y) * 0.018) * d * 0.45 + uCloud * d * 0.03;
+  vCol = c * it * exp(-od * 0.75) * (1.0 - smoothstep(uFogFar * 0.72, uFogFar * 0.97, d));
+  vUv = position.xy;
+}`;
+const LIGHT_FS = /* glsl */`
+varying vec2 vUv; varying vec3 vCol;
+void main(){
+  float r = length(vUv);
+  float a = exp(-r * r * 60.0) + 0.07 * exp(-r * 4.5) * (1.0 - smoothstep(0.7, 1.0, r));
+  gl_FragColor = vec4(vCol * a, 1.0);
+}`;
+
+// double-sided: streak quads face either way, and the mirrored pass flips the winding of every sprite
+const ADD = { blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, side: THREE.DoubleSide };
+const matBox = mkMat(BOX_VS, BOX_FS, null, { side: THREE.DoubleSide });
+const matCyl = mkMat(CYL_VS, CYL_FS, null, { side: THREE.DoubleSide });
+const matGround = mkMat(GROUND_VS, GROUND_FS, { uCenter: { value: new THREE.Vector2() }, uReflOn: { value: 1 }, uRainOn: { value: 1 } }, { side: THREE.DoubleSide });
+const matSky = mkMat(SKY_VS, SKY_FS, null, { side: THREE.DoubleSide, depthWrite: false });
+const matLight = mkMat(LIGHT_VS, LIGHT_FS, null, ADD);
+
+// ───────────────────────── rain: streaks that stretch along relative velocity ─────────────────────────
+const RAIN_VS = /* glsl */`
+attribute vec4 aSeed;
+uniform vec3 uRainVel; uniform float uRainT, uRainScale;
+varying vec2 vUv; varying float vA;
+void main(){
+  float far = step(0.5, aSeed.w);
+  vec3 B = mix(vec3(44.0, 40.0, 44.0), vec3(150.0, 90.0, 150.0), far);
+  float sp = mix(0.85, 1.25, fract(aSeed.w * 7.31));
+  vec3 p = aSeed.xyz * B + uRainVel * sp * uRainT;
+  p = mod(p - cameraPosition + B * 0.5, B) - B * 0.5 + cameraPosition;      // endless: wrap a box around the camera
+  vec3 vel = uRainVel * sp * uRainScale - uCamVel * mix(0.45, 1.0, uBoost);  // what the camera sees (full stretch only under boost)
+  vec3 tail = -vel * mix(0.034, 0.06, uBoost);
+  float len = length(tail), minLen = mix(0.05, 0.11, uSlow);
+  if (len < minLen) { tail = (len > 1e-5 ? tail / len : vec3(0.0, 1.0, 0.0)) * minLen; len = minLen; }
+  vec3 a = (viewMatrix * vec4(p, 1.0)).xyz, b = (viewMatrix * vec4(p + tail, 1.0)).xyz;
+  vec3 side = cross(b - a, a); side /= max(length(side), 1e-5);
+  float d = -a.z;
+  float w0 = mix(0.02, 0.036, far) * (1.0 + uSlow * 1.3), w = max(w0, d * 0.0016);
+  gl_Position = projectionMatrix * vec4(mix(a, b, position.y) + side * position.x * w, 1.0);
+  vUv = vec2(position.x * 2.0, position.y);
+  float cd = length(p - cameraPosition);
+  vA = smoothstep(1.2, 5.0, d) * (1.0 - smoothstep(B.x * 0.34, B.x * 0.5, cd))
+     * (0.13 + 0.06 * far) * (1.0 + 3.5 / (1.0 + d * d * 0.02))            // drops near the camera catch the light
+     * sqrt(w0 / w) * mix(clamp(1.5 / len, 0.14, 2.5), 2.2, uSlow) * (1.0 + uFlash * 1.5) * (1.0 - uCloud);
+}`;
+const RAIN_FS = /* glsl */`
+varying vec2 vUv; varying float vA;
+void main(){
+  float streak = (1.0 - vUv.x * vUv.x) * smoothstep(0.0, 0.12, vUv.y) * mix(1.0, 0.25, vUv.y) * (1.0 - smoothstep(0.7, 1.0, vUv.y));
+  float r = length(vec2(vUv.x, vUv.y * 2.0 - 1.0));
+  float bead = (1.0 - smoothstep(0.5, 0.95, r)) * (0.22 + 1.6 * exp(-dot(vUv - vec2(0.3, 0.68), vUv - vec2(0.3, 0.68)) * 30.0));   // frozen droplet with a glint
+  gl_FragColor = vec4(vec3(0.55, 1.0, 0.7) * mix(streak, bead, uSlow) * vA, 1.0);
+}`;
+
+// ───────────────────────── rain: some drops are falling strands of glyphs ─────────────────────────
+const GRAIN_VS = /* glsl */`
+attribute vec4 aSeed;
+uniform float uRainT;
+varying vec2 vUv; varying float vA; varying float vS;
+void main(){
+  const vec3 B = vec3(110.0, 80.0, 110.0);
+  vec3 p = aSeed.xyz * B; p.y -= mix(9.0, 20.0, aSeed.w) * uRainT;
+  p = mod(p - cameraPosition + B * 0.5, B) - B * 0.5 + cameraPosition;
+  float gs = mix(0.22, 0.44, fract(aSeed.w * 5.7));
+  vec3 toC = cameraPosition - p;
+  vec3 right = normalize(vec3(toC.z, 0.0, -toC.x) + vec3(1e-5, 0.0, 0.0));
+  vec3 wp = p + right * position.x * gs + vec3(0.0, position.y * gs * 8.75, 0.0);
+  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+  float d = length(toC);
+  vUv = vec2(position.x + 0.5, position.y); vS = aSeed.w * 100.0;
+  vA = smoothstep(0.6, 3.0, d) * (1.0 - smoothstep(38.0, 55.0, d)) * (0.7 + 2.5 / (1.0 + d * d * 0.01)) * (1.0 + uSlow) * (1.0 - uCloud);
+}`;
+const GRAIN_FS = /* glsl */`
+uniform float uRainT;
+varying vec2 vUv; varying float vA; varying float vS;
+void main(){
+  const float N = 7.0;
+  vec2 uvc = vUv * vec2(1.0, N);
+  float row = floor(uvc.y);                              // row 0 is the leading glyph
+  float chg = floor(uRainT * 5.0 + vS + row * 0.37);
+  float g = glyph(vec2(vUv.x, fract(uvc.y)), floor(h21(vec2(row + chg * 3.7, vS)) * 64.0), dFdx(uvc), dFdy(uvc));
+  float head = step(row, 0.5);
+  vec3 c = mix(vec3(0.15, 1.0, 0.35) * pow(clamp(1.0 - row / N, 0.0, 1.0), 1.6), vec3(0.8, 1.0, 0.85) * 2.2, head);
+  gl_FragColor = vec4(c * g * vA, 1.0);
+}`;
+
+// ───────────────────────── steam from street vents and stacks ─────────────────────────
+const STEAM_VS = /* glsl */`
+attribute vec4 aBase; attribute vec4 aRnd;        // aBase = vent xyz + scale, aRnd = phase + three randoms
+varying vec2 vUv; varying float vA; varying float vR; varying float vY;
+void main(){
+  float rate = mix(0.16, 0.26, aRnd.y), tt = uTime * rate + aRnd.x, age = fract(tt), sc = aBase.w;
+  vec3 p = aBase.xyz;
+  p.y += age * mix(9.0, 16.0, aRnd.z) * sc;
+  p.x += (age * age * 5.0 + sin(age * 5.0 + aRnd.w * 6.28) * 0.7) * sc;
+  p.z += (age * age * 2.0 + cos(age * 4.0 + aRnd.y * 6.28) * 0.7) * sc;
+  vec4 mv = viewMatrix * vec4(p, 1.0);
+  mv.xy += position.xy * mix(0.8, 5.5, sqrt(age)) * sc;
+  gl_Position = projectionMatrix * mv;
+  float d = length(mv.xyz);
+  vUv = position.xy; vR = aRnd.w * 50.0 + floor(tt); vY = p.y;
+  vA = smoothstep(0.0, 0.12, age) * pow(1.0 - age, 1.5) * 0.32 * smoothstep(1.0, 6.0, d) * (1.0 - smoothstep(360.0, 520.0, d));
+}`;
+const STEAM_FS = /* glsl */`
+varying vec2 vUv; varying float vA; varying float vR; varying float vY;
+void main(){
+  float r = length(vUv); if (r > 1.0) discard;
+  float n = vn(vUv * 1.7 + vR) * 0.6 + vn(vUv * 3.9 + vR * 1.7) * 0.4;
+  float a = (1.0 - r * r) * smoothstep(0.2, 0.75, n + 0.3 * (1.0 - r)) * vA;
+  vec3 c = uFogCol * 5.0 + vec3(0.55, 1.0, 0.38) * 0.13 * exp(-vY / 12.0) + vec3(0.7, 1.0, 0.85) * uFlash * 0.6;
+  gl_FragColor = vec4(c * a, a);
+}`;
+
+// ───────────────────────── traffic: car bodies + headlights, taillights, beams on the road ─────────────────────────
+const CAR_COMMON = /* glsl */`
+attribute vec4 iCar;            // x, z, heading index (0 +x, 1 -x, 2 +z, 3 -z), seed
+attribute float iCarS;          // brake amount
+vec2 carFwd(float d){ return d < 0.5 ? vec2(1.0, 0.0) : d < 1.5 ? vec2(-1.0, 0.0) : d < 2.5 ? vec2(0.0, 1.0) : vec2(0.0, -1.0); }
+`;
+const CAR_VS = CAR_COMMON + /* glsl */`
+varying vec3 vWP; varying vec3 vN; varying float vSeed; varying float vLY;
+void main(){
+  vec2 fw = carFwd(iCar.z), rt = vec2(-fw.y, fw.x);
+  vec3 wp = vec3(iCar.x + fw.x * position.z + rt.x * position.x, position.y, iCar.y + fw.y * position.z + rt.y * position.x);
+  vN = vec3(fw.x * normal.z + rt.x * normal.x, normal.y, fw.y * normal.z + rt.y * normal.x);
+  vWP = wp; vSeed = iCar.w; vLY = position.y;
+  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+}`;
+const CAR_FS = /* glsl */`
+varying vec3 vWP; varying vec3 vN; varying float vSeed; varying float vLY;
+void main(){
+  bool front = gl_FrontFacing; if (uMirror < 0.0) front = !front;
+  if (!front) discard;
+  vec3 n = normalize(vN), V = normalize(cameraPosition - vWP);
+  float fres = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 3.0);
+  vec3 col = mix(vec3(0.012), vec3(0.05, 0.055, 0.05), vSeed) * (vLY > 1.02 ? 0.3 : 1.0);
+  vec3 c = col * sceneLight(n, vWP.y) + skyGrad(reflect(-V, n).y) * (0.3 + 3.0 * fres);
+  gl_FragColor = vec4(applyFog(c, vWP), 1.0);
+}`;
+const CARL_VS = CAR_COMMON + /* glsl */`
+attribute float aPart;          // 0,1 headlights  2,3 taillights  4 beam on the road  5 tail glow on the road
+varying vec2 vUv; varying vec3 vCol; varying float vKind;
+void main(){
+  vec2 fw = carFwd(iCar.z), rt = vec2(-fw.y, fw.x);
+  vec3 F = vec3(fw.x, 0.0, fw.y), R = vec3(rt.x, 0.0, rt.y), base = vec3(iCar.x, 0.0, iCar.y);
+  float head = (aPart < 1.5 || (aPart > 3.5 && aPart < 4.5)) ? 1.0 : 0.0;
+  float dc = distance(cameraPosition, base);
+  float od = uFogDen * dc + uFogH * exp(-abs(cameraPosition.y) * 0.018) * dc * 0.45 + uCloud * dc * 0.03;
+  float att = exp(-od * 0.75) * (1.0 - smoothstep(330.0, 400.0, dc));
+  if (aPart < 3.5) {
+    float sgn = mod(aPart, 2.0) < 0.5 ? -1.0 : 1.0;
+    vec3 lp = base + F * (head > 0.5 ? 2.15 : -2.2) + R * 0.62 * sgn + vec3(0.0, 0.68, 0.0);
+    vec3 tc = normalize(cameraPosition - lp);
+    float vis = smoothstep(-0.15, 0.5, dot(tc.xz, fw) * (head > 0.5 ? 1.0 : -1.0));
+    vec4 mv = viewMatrix * vec4(lp, 1.0);
+    float size = max(head > 0.5 ? 0.7 + 1.2 * vis : 0.7, length(mv.xyz) * 0.002);
+    mv.xy += position.xy * size * vec2(head > 0.5 ? 1.7 : 1.0, 1.0);
+    gl_Position = projectionMatrix * mv;
+    vCol = (head > 0.5 ? vec3(0.75, 1.0, 0.85) * (0.4 + 3.4 * vis) : vec3(1.0, 0.12, 0.06) * (0.5 + 1.8 * iCarS) * (0.25 + 0.75 * vis)) * att;
+    vKind = 0.0;
+  } else {
+    float t = position.y * 0.5 + 0.5;
+    vec3 wp = base + F * (head > 0.5 ? mix(1.8, 32.0, t) : mix(-2.2, -9.0, t)) + R * position.x * (head > 0.5 ? 2.2 + 2.6 * t : 1.5);
+    wp.y = 0.05;
+    gl_Position = uMirror < 0.0 ? vec4(2.0, 2.0, 2.0, 1.0) : projectionMatrix * viewMatrix * vec4(wp, 1.0);
+    vCol = (head > 0.5 ? vec3(0.6, 1.0, 0.75) * 0.55 : vec3(1.0, 0.12, 0.06) * 0.14 * (0.5 + 1.5 * iCarS)) * att;
+    vKind = 1.0;
+  }
+  vUv = position.xy;
+}`;
+const CARL_FS = /* glsl */`
+varying vec2 vUv; varying vec3 vCol; varying float vKind;
+void main(){
+  float a;
+  if (vKind < 0.5) { float r = length(vUv); a = exp(-r * r * 30.0) + 0.14 * exp(-r * 5.0) * (1.0 - smoothstep(0.7, 1.0, r)); }
+  else { float t = vUv.y * 0.5 + 0.5; a = (1.0 - smoothstep(0.15, 1.0, abs(vUv.x))) * smoothstep(0.0, 0.08, t) * pow(clamp(1.0 - t, 0.0, 1.0), 1.6); }
+  gl_FragColor = vec4(vCol * a, 1.0);
+}`;
+
+const matRain = mkMat(RAIN_VS, RAIN_FS, { uRainVel: { value: new THREE.Vector3(5, -44, 2.5) }, uRainT: { value: 0 }, uRainScale: { value: 1 } }, ADD);
+const matGRain = mkMat(GRAIN_VS, GRAIN_FS, { uRainT: matRain.uniforms.uRainT }, ADD);
+const matSteam = mkMat(STEAM_VS, STEAM_FS, null, { transparent: true, depthWrite: false, premultipliedAlpha: true });
+const matCar = mkMat(CAR_VS, CAR_FS, null, { side: THREE.DoubleSide });
+const matCarL = mkMat(CARL_VS, CARL_FS, null, Object.assign({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }, ADD));
+
+// ───────────────────────── scene, cameras, shared geometry ─────────────────────────
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(72, 1, 0.5, 4000);
+const reflCam = new THREE.PerspectiveCamera();
+reflCam.matrixAutoUpdate = false; reflCam.matrixWorldAutoUpdate = false;
+
+const geoBox = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+const geoCyl = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false).translate(0, 0.5, 0);
+const geoQuad = new THREE.PlaneGeometry(2, 2);            // corners at -1..1
+const geoStreak = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);   // x -0.5..0.5, y 0..1
+
+function instGeo(base, cap, layout) {
+  const g = new THREE.InstancedBufferGeometry();
+  g.index = base.index;
+  g.setAttribute('position', base.attributes.position);
+  if (base.attributes.normal) g.setAttribute('normal', base.attributes.normal);
+  if (base.attributes.aPart) g.setAttribute('aPart', base.attributes.aPart);
+  for (const [name, n] of layout) {
+    const a = new THREE.InstancedBufferAttribute(new Float32Array(cap * n), n);
+    a.setUsage(THREE.DynamicDrawUsage); g.setAttribute(name, a);
+  }
+  g.instanceCount = 0;
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
+  return g;
+}
+function addMesh(geo, mat, order) {
+  const m = new THREE.Mesh(geo, mat);
+  m.matrixAutoUpdate = false; m.frustumCulled = false;
+  if (order !== undefined) m.renderOrder = order;
+  scene.add(m); return m;
+}
+function fillRandom(attr, rnd) { const a = attr.array; for (let i = 0; i < a.length; i++) a[i] = rnd(); attr.needsUpdate = true; }
+
+const ground = addMesh(new THREE.PlaneGeometry(1, 1), matGround);
+const sky = addMesh(new THREE.IcosahedronGeometry(1, 2), matSky, 5);
+
+const N_RAIN = IS_TOUCH ? 7000 : 15000, N_GRAIN = IS_TOUCH ? 300 : 640;
+const rainGeo = instGeo(geoStreak, N_RAIN, [['aSeed', 4]]); rainGeo.instanceCount = N_RAIN;
+const grainGeo = instGeo(geoStreak, N_GRAIN, [['aSeed', 4]]); grainGeo.instanceCount = N_GRAIN;
+fillRandom(rainGeo.attributes.aSeed, mulberry32(11)); fillRandom(grainGeo.attributes.aSeed, mulberry32(23));
+const rain = addMesh(rainGeo, matRain, 20), grain = addMesh(grainGeo, matGRain, 21);
+
+const MAX_STEAM = 2048, STEAM_PER_VENT = 8;
+const steamGeo = instGeo(geoQuad, MAX_STEAM, [['aBase', 4], ['aRnd', 4]]);
+const steam = addMesh(steamGeo, matSteam, 15);
+
+// car body = two boxes, nose toward +z
+const geoCar = (() => {
+  const a = new THREE.BoxGeometry(1.9, 0.7, 4.4).translate(0, 0.65, 0).toNonIndexed();
+  const b = new THREE.BoxGeometry(1.7, 0.55, 2.3).translate(0, 1.27, -0.25).toNonIndexed();
+  const g = new THREE.BufferGeometry();
+  for (const n of ['position', 'normal']) {
+    const arr = new Float32Array(a.attributes[n].array.length + b.attributes[n].array.length);
+    arr.set(a.attributes[n].array); arr.set(b.attributes[n].array, a.attributes[n].array.length);
+    g.setAttribute(n, new THREE.BufferAttribute(arr, 3));
+  }
+  return g;
+})();
+// six quads per car: 2 headlights, 2 taillights, beam and tail glow on the road
+const geoCarL = (() => {
+  const pos = [], part = [], idx = [];
+  for (let p = 0; p < 6; p++) {
+    const o = p * 4;
+    pos.push(-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0); part.push(p, p, p, p);
+    idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aPart', new THREE.Float32BufferAttribute(part, 1));
+  g.setIndex(idx);
+  return g;
+})();
+const N_CARS = IS_TOUCH ? 140 : 280;
+const carGeo = instGeo(geoCar, N_CARS, [['iCar', 4], ['iCarS', 1]]);
+const carLGeo = instGeo(geoCarL, N_CARS, []);
+carLGeo.setAttribute('iCar', carGeo.attributes.iCar); carLGeo.setAttribute('iCarS', carGeo.attributes.iCarS);
+const carMesh = addMesh(carGeo, matCar), carLMesh = addMesh(carLGeo, matCarL, 12);
+
+// ───────────────────────── procedural city: one cell = one block ─────────────────────────
+// Every value comes from mulberry32(hash(SEED, ix, iz)), so a seed always rebuilds the same city.
+let cellCache = new Map();
+const cellKey = (ix, iz) => (ix + 32768) * 65536 + (iz + 32768);
+function getCell(ix, iz) {
+  const k = cellKey(ix, iz); let c = cellCache.get(k);
+  if (!c) { if (cellCache.size > 6000) cellCache.clear(); c = genCell(ix, iz); cellCache.set(k, c); }
+  return c;
+}
+const signalPhase = (ix, iz) => hash01(SEED ^ 0x5151, ix, iz);
+
+function genCell(ix, iz) {
+  const rnd = mulberry32(hashInt(SEED, ix, iz));
+  const R = (a, b) => a + (b - a) * rnd();
+  // boxes/poles rows: x, y0, z, w, h, d, seed, style, code, kind, buildingX, buildingZ
+  const cell = { bodies: [], boxes: [], props: [], poles: [], cyls: [], beacons: [], lamps: [], signals: [], vents: [], maxH: 0, top: 0 };
+  const X = ix * CELL, Z = iz * CELL, lo = ROAD / 2 + 1.5, hi = CELL - ROAD / 2 - 1.5;
+  const dn = vnoise(ix / 5, iz / 5, 0x51), dn2 = vnoise(ix / 2.3 + 40, iz / 2.3, 0x77), goth = vnoise(ix / 4 + 9, iz / 4 - 7, 0x99);
+  const hBase = lerp(26, 250, Math.pow(dn, 1.7)) * lerp(0.7, 1.25, dn2);
+
+  const building = (ax0, az0, ax1, az1, h, podium) => {
+    const bx = (ax0 + ax1) / 2, bz = (az0 + az1) / 2;
+    let w = ax1 - ax0, d = az1 - az0, y = 0;
+    const seed = rnd(), sr = rnd();
+    const pG = lerp(0.6, 0.25, goth), pT = lerp(0.2, 0.55, goth);
+    const style = sr < pG ? 0 : sr < pG + pT ? 1 : 2;            // glass, gothic, industrial
+    const code = rnd() < 0.3 ? R(0.55, 0.95) : R(0.08, 0.4);
+    h = Math.max(14, h);
+    const body = (kind, hh, sd) => {
+      cell.bodies.push({ x0: bx - w / 2, x1: bx + w / 2, z0: bz - d / 2, z1: bz + d / 2, y0: y, y1: y + hh });
+      cell.boxes.push([bx, y, bz, w, hh, d, sd, style, code, kind, bx, bz]); y += hh;
+    };
+    if (podium) { body(1, R(6, 12), seed + 0.5); const s = R(3, 7); w -= s * 2; d -= s * 2; }
+    const nt = style === 0 ? (rnd() < 0.55 ? 1 : 2) : style === 1 ? (rnd() < 0.5 ? 2 : 3) : (rnd() < 0.6 ? 1 : 2);
+    let tw = w, td = d;
+    for (let t = 0; t < nt; t++) {
+      const hh = t === nt - 1 ? h - y : (h - y) * R(0.45, 0.7);
+      tw = w; td = d;
+      body(0, Math.max(4, hh), seed + t * 0.013);
+      const s = style === 1 ? R(3, 6) : R(2, 5);
+      w = Math.max(8, w - s * 2); d = Math.max(8, d - s * 2);
+    }
+    // rooftop
+    const prop = (px, py, pz, pw, ph, pd, kind) => cell.props.push([px, py, pz, pw, ph, pd, rnd(), style, 0, kind, bx, bz]);
+    const cyl = (px, py, pz, r, hh, taper, st) => cell.cyls.push([px, py, pz, r, hh, r, rnd(), taper, st, 0, bx, bz]);
+    const mx = Math.max(0.5, tw / 2 - 2.5), mz = Math.max(0.5, td / 2 - 2.5);
+    let top = y;
+    if (style === 1) {                                           // gothic: corner pinnacles + spire
+      const ph = R(7, 13);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) cyl(bx + sx * (tw / 2 - 1.2), y, bz + sz * (td / 2 - 1.2), 1.1, ph, 0.04, 2);
+      top = y + ph;
+      if (rnd() < 0.7) {
+        const sh = R(14, 42);
+        cyl(bx, y, bz, Math.min(tw, td) * R(0.22, 0.34), sh, 0.03, 2);
+        cell.beacons.push([bx, y + sh + 0.6, bz, 2, 2.6, rnd(), 0]); top = y + sh;
+      }
+    } else if (style === 0) {                                    // glass: plant room, mast, AC units
+      prop(bx + R(-mx, mx) * 0.3, y, bz + R(-mz, mz) * 0.3, tw * R(0.3, 0.55), R(2.5, 5), td * R(0.3, 0.5), 2);
+      if (rnd() < 0.65) {
+        const ah = R(10, 38), px = bx + R(-mx, mx) * 0.6, pz = bz + R(-mz, mz) * 0.6;
+        prop(px, y, pz, 0.45, ah, 0.45, 3);
+        cell.beacons.push([px, y + ah + 0.4, pz, 1, 2.4, rnd(), 0]); top = y + ah;
+      }
+      for (let i = 0, n = 1 + (rnd() * 3 | 0); i < n; i++) prop(bx + R(-mx, mx), y, bz + R(-mz, mz), R(1.5, 3), R(1, 1.8), R(1.5, 3), 2);
+    } else {                                                     // industrial: water tank, stacks, ducts
+      const tx = bx + R(-mx, mx) * 0.7, tz = bz + R(-mz, mz) * 0.7;
+      prop(tx, y, tz, 3.4, 2.4, 3.4, 2); cyl(tx, y + 2.4, tz, 2.5, 4.2, 1, 0); cyl(tx, y + 6.6, tz, 2.7, 1.6, 0.05, 0);
+      top = y + 8.2;
+      for (let i = 0, n = 1 + (rnd() * 2 | 0); i < n; i++) {
+        const sx = bx + R(-mx, mx), sz = bz + R(-mz, mz), sh = R(12, 28);
+        cyl(sx, y, sz, R(1.3, 2.1), sh, 0.72, 1);
+        cell.beacons.push([sx, y + sh + 0.5, sz, 2, 2.2, rnd(), 0]);
+        cell.vents.push([sx, y + sh, sz, 2.3]); top = Math.max(top, y + sh);
+      }
+      prop(bx + R(-mx, mx) * 0.5, y, bz + R(-mz, mz) * 0.5, R(4, 9), R(1.5, 2.5), R(2, 4), 2);
+    }
+    cell.maxH = Math.max(cell.maxH, y); cell.top = Math.max(cell.top, top);
+  };
+
+  const pat = rnd(), span = hi - lo;
+  if (pat < 0.28) {                                              // one tower on a podium
+    const w = R(46, 66), d = R(46, 66), ox = R(lo, hi - w), oz = R(lo, hi - d);
+    building(X + ox, Z + oz, X + ox + w, Z + oz + d, hBase * R(0.9, 1.5), true);
+  } else if (pat < 0.62) {                                       // two slabs with an alley
+    const s = R(0.4, 0.6) * span, g = R(2, 3.5);
+    if (rnd() < 0.5) { building(X + lo, Z + lo, X + lo + s - g, Z + hi, hBase * R(0.6, 1.3), false); building(X + lo + s + g, Z + lo, X + hi, Z + hi, hBase * R(0.6, 1.3), false); }
+    else { building(X + lo, Z + lo, X + hi, Z + lo + s - g, hBase * R(0.6, 1.3), false); building(X + lo, Z + lo + s + g, X + hi, Z + hi, hBase * R(0.6, 1.3), false); }
+  } else if (pat < 0.93) {                                       // four buildings
+    const sx = R(0.42, 0.58) * span, sz = R(0.42, 0.58) * span, g = R(2, 3);
+    building(X + lo, Z + lo, X + lo + sx - g, Z + lo + sz - g, hBase * R(0.5, 1.2), false);
+    building(X + lo + sx + g, Z + lo, X + hi, Z + lo + sz - g, hBase * R(0.5, 1.2), false);
+    building(X + lo, Z + lo + sz + g, X + lo + sx - g, Z + hi, hBase * R(0.5, 1.2), false);
+    building(X + lo + sx + g, Z + lo + sz + g, X + hi, Z + hi, hBase * R(0.5, 1.2), false);
+  } else {                                                       // slim megatower on a plaza
+    const w = R(30, 40), ox = R(lo + 6, hi - w - 6), oz = R(lo + 6, hi - w - 6);
+    building(X + ox, Z + oz, X + ox + w, Z + oz + w, Math.min(430, hBase * R(1.7, 2.3) + 60), true);
+  }
+
+  // street lamps: positions must match lampPool() in the ground shader
+  const lampAt = (lx, lz, px, pz) => {
+    cell.lamps.push([lx, 8.4, lz, 0, 3.6, 0, 0]);
+    cell.poles.push([px, 0, pz, 0.3, 8.7, 0.3, 0.5, 0, 0, 3, 1e7, 1e7]);
+    cell.poles.push([(lx + px) / 2, 8.55, (lz + pz) / 2, Math.abs(lx - px) + 0.22, 0.2, Math.abs(lz - pz) + 0.22, 0.5, 0, 0, 3, 1e7, 1e7]);
+  };
+  for (const a of [12.5, 62.5]) { lampAt(X + 6.5, Z + a, X + 10.6, Z + a); lampAt(X + a, Z + 6.5, X + a, Z + 10.6); }
+  for (const a of [37.5, 87.5]) { lampAt(X - 6.5, Z + a, X - 10.6, Z + a); lampAt(X + a, Z - 6.5, X + a, Z - 10.6); }
+  // traffic signals at the intersection this cell owns
+  const ph = signalPhase(ix, iz);
+  for (const [sx, sz, axis] of [[-9, 9, 0], [9, -9, 0], [9, 9, 1], [-9, -9, 1]]) {
+    cell.signals.push([X + sx, 6.2, Z + sz, 3, 1.5, ph, axis]);
+    cell.poles.push([X + sx, 0, Z + sz, 0.26, 6.5, 0.26, 0.3, 0, 0, 3, 1e7, 1e7]);
+  }
+  // steam vents in the road
+  for (let i = 0, n = (rnd() * 2.4) | 0; i < n; i++) {
+    if (rnd() < 0.5) cell.vents.push([X + R(-6, 6), 0.1, Z + R(20, 80), 1]);
+    else cell.vents.push([X + R(20, 80), 0.1, Z + R(-6, 6), 1]);
+  }
+  return cell;
+}
+
+// ───────────────────────── chunks: pooled instance buffers, streamed around the camera ─────────────────────────
+const BOX_CAP = 320, CYL_CAP = 96, LIGHT_CAP = 112;
+const BOX_LAYOUT = [['iPos', 3], ['iSize', 3], ['iPar', 4], ['iBld', 2]];
+const chunks = new Map(), chunkPool = [], buildQueue = [];
+const chunkKey = cellKey;
+let lastCx = 1e9, lastCz = 1e9, steamDirty = true;
+
+function newChunk() {
+  const ch = { cx: 0, cz: 0, cells: [], nBody: 0, nProp: 0, nBox: 0, nCyl: 0, nBeacon: 0, nLamp: 0, nLight: 0, c: new THREE.Vector3(), rad: 0, dist: 0 };
+  ch.box = addMesh(instGeo(geoBox, BOX_CAP, BOX_LAYOUT), matBox);
+  ch.cyl = addMesh(instGeo(geoCyl, CYL_CAP, BOX_LAYOUT), matCyl);
+  ch.lights = addMesh(instGeo(geoQuad, LIGHT_CAP, [['iPos', 3], ['iL', 4]]), matLight, 11);
+  ch.meshes = [ch.box, ch.cyl, ch.lights];
+  for (const m of ch.meshes) m.frustumCulled = true;
+  return ch;
+}
+function writeRows(geo, rows, i, cap) {
+  const P = geo.attributes.iPos.array, Sz = geo.attributes.iSize.array, A = geo.attributes.iPar.array, B = geo.attributes.iBld.array;
+  for (const r of rows) {
+    if (i >= cap) break;
+    P[i * 3] = r[0]; P[i * 3 + 1] = r[1]; P[i * 3 + 2] = r[2];
+    Sz[i * 3] = r[3]; Sz[i * 3 + 1] = r[4]; Sz[i * 3 + 2] = r[5];
+    A[i * 4] = r[6]; A[i * 4 + 1] = r[7]; A[i * 4 + 2] = r[8]; A[i * 4 + 3] = r[9];
+    B[i * 2] = r[10]; B[i * 2 + 1] = r[11]; i++;
+  }
+  return i;
+}
+function writeLights(geo, rows, i) {
+  const P = geo.attributes.iPos.array, L = geo.attributes.iL.array;
+  for (const r of rows) {
+    if (i >= LIGHT_CAP) break;
+    P[i * 3] = r[0]; P[i * 3 + 1] = r[1]; P[i * 3 + 2] = r[2];
+    L[i * 4] = r[3]; L[i * 4 + 1] = r[4]; L[i * 4 + 2] = r[5]; L[i * 4 + 3] = r[6]; i++;
+  }
+  return i;
+}
+function buildChunk(cx, cz) {
+  const ch = chunkPool.pop() || newChunk();
+  ch.cx = cx; ch.cz = cz; ch.cells.length = 0;
+  let top = 0;
+  for (let j = 0; j < CHUNK_CELLS; j++) for (let i = 0; i < CHUNK_CELLS; i++) {
+    const c = getCell(cx * CHUNK_CELLS + i, cz * CHUNK_CELLS + j); ch.cells.push(c); top = Math.max(top, c.top);
+  }
+  // instance order = LOD order: bodies, then roof props, then street poles
+  let n = 0; const bg = ch.box.geometry, cg = ch.cyl.geometry, lg = ch.lights.geometry;
+  for (const c of ch.cells) n = writeRows(bg, c.boxes, n, BOX_CAP); ch.nBody = n;
+  for (const c of ch.cells) n = writeRows(bg, c.props, n, BOX_CAP); ch.nProp = n;
+  for (const c of ch.cells) n = writeRows(bg, c.poles, n, BOX_CAP); ch.nBox = n;
+  n = 0; for (const c of ch.cells) n = writeRows(cg, c.cyls, n, CYL_CAP); ch.nCyl = n;
+  n = 0; for (const c of ch.cells) n = writeLights(lg, c.beacons, n); ch.nBeacon = n;
+  for (const c of ch.cells) n = writeLights(lg, c.lamps, n); ch.nLamp = n;
+  for (const c of ch.cells) n = writeLights(lg, c.signals, n); ch.nLight = n;
+  ch.c.set((cx + 0.5) * CHUNK, top / 2, (cz + 0.5) * CHUNK);
+  ch.rad = Math.hypot(CHUNK * 0.5 + 14, CHUNK * 0.5 + 14, top / 2 + 4);
+  for (const m of ch.meshes) {
+    for (const k in m.geometry.attributes) if (m.geometry.attributes[k].isInstancedBufferAttribute) m.geometry.attributes[k].needsUpdate = true;
+    m.geometry.boundingSphere.center.copy(ch.c); m.geometry.boundingSphere.radius = ch.rad; m.visible = true;
+  }
+  chunks.set(chunkKey(cx, cz), ch);
+}
+function releaseChunk(ch) { for (const m of ch.meshes) m.visible = false; chunkPool.push(ch); }
+
+function rebuildSteam(ccx, ccz) {
+  const B = steamGeo.attributes.aBase.array, Rn = steamGeo.attributes.aRnd.array; let n = 0;
+  for (const ch of chunks.values()) {
+    if (Math.abs(ch.cx - ccx) > 2 || Math.abs(ch.cz - ccz) > 2) continue;
+    for (const c of ch.cells) for (const v of c.vents) for (let k = 0; k < STEAM_PER_VENT && n < MAX_STEAM; k++, n++) {
+      const hx = Math.round(v[0] * 8), hz = Math.round(v[2] * 8);
+      B[n * 4] = v[0]; B[n * 4 + 1] = v[1]; B[n * 4 + 2] = v[2]; B[n * 4 + 3] = v[3];
+      Rn[n * 4] = k / STEAM_PER_VENT + hash01(hx, hz, k) * 0.1; Rn[n * 4 + 1] = hash01(hx, hz, k + 50);
+      Rn[n * 4 + 2] = hash01(hx, hz, k + 100); Rn[n * 4 + 3] = hash01(hx, hz, k + 150);
+    }
+  }
+  steamGeo.instanceCount = n;
+  steamGeo.attributes.aBase.needsUpdate = true; steamGeo.attributes.aRnd.needsUpdate = true;
+}
+function updateChunks(px, pz, budget) {
+  const ccx = Math.floor(px / CHUNK), ccz = Math.floor(pz / CHUNK);
+  if (ccx !== lastCx || ccz !== lastCz) {
+    lastCx = ccx; lastCz = ccz;
+    for (const [k, ch] of chunks) if (Math.abs(ch.cx - ccx) > RC || Math.abs(ch.cz - ccz) > RC) { releaseChunk(ch); chunks.delete(k); }
+    buildQueue.length = 0;
+    for (let dz = -RC; dz <= RC; dz++) for (let dx = -RC; dx <= RC; dx++)
+      if (!chunks.has(chunkKey(ccx + dx, ccz + dz))) buildQueue.push([ccx + dx, ccz + dz, dx * dx + dz * dz]);
+    buildQueue.sort((a, b) => b[2] - a[2]);                      // nearest last, so pop() takes it first
+    steamDirty = true;
+  }
+  while (budget-- > 0 && buildQueue.length) { const q = buildQueue.pop(); buildChunk(q[0], q[1]); if (q[2] <= 8) steamDirty = true; }
+  if (steamDirty) { rebuildSteam(ccx, ccz); steamDirty = false; }
+}
+// LOD by instance count: far chunks draw bodies only, then props, then street furniture
+function chunkLOD(px, pz, mirror) {
+  for (const ch of chunks.values()) {
+    const d = ch.dist = Math.hypot(ch.c.x - px, ch.c.z - pz);
+    ch.box.geometry.instanceCount = mirror ? ch.nBody : d < 420 ? ch.nBox : d < 800 ? ch.nProp : ch.nBody;
+    ch.cyl.visible = !mirror && d < 800 && ch.nCyl > 0; ch.cyl.geometry.instanceCount = ch.nCyl;
+    ch.lights.geometry.instanceCount = d < 380 ? ch.nLight : d < 950 ? ch.nLamp : ch.nBeacon;
+  }
+}
+function resetCity() {
+  for (const ch of chunks.values()) releaseChunk(ch);
+  chunks.clear(); cellCache.clear(); lastCx = lastCz = 1e9;
+}
+
+// sphere vs building boxes; pushes the position out and removes the inward velocity
+function collide(pos, vel, r) {
+  const ix0 = Math.floor((pos.x - r) / CELL), ix1 = Math.floor((pos.x + r) / CELL);
+  const iz0 = Math.floor((pos.z - r) / CELL), iz1 = Math.floor((pos.z + r) / CELL);
+  for (let iz = iz0; iz <= iz1; iz++) for (let ix = ix0; ix <= ix1; ix++) for (const b of getCell(ix, iz).bodies) {
+    const qx = clamp(pos.x, b.x0, b.x1), qy = clamp(pos.y, b.y0, b.y1), qz = clamp(pos.z, b.z0, b.z1);
+    let nx = pos.x - qx, ny = pos.y - qy, nz = pos.z - qz;
+    const d2 = nx * nx + ny * ny + nz * nz;
+    if (d2 >= r * r) continue;
+    let pen;
+    if (d2 > 1e-8) { const d = Math.sqrt(d2); nx /= d; ny /= d; nz /= d; pen = r - d; }
+    else {                                                       // centre is inside: leave through the nearest face
+      const e = [pos.x - b.x0, b.x1 - pos.x, pos.z - b.z0, b.z1 - pos.z, b.y1 - pos.y];
+      let m = 0; for (let i = 1; i < 5; i++) if (e[i] < e[m]) m = i;
+      nx = m === 0 ? -1 : m === 1 ? 1 : 0; nz = m === 2 ? -1 : m === 3 ? 1 : 0; ny = m === 4 ? 1 : 0; pen = e[m] + r;
+    }
+    pos.x += nx * pen; pos.y += ny * pen; pos.z += nz * pen;
+    const vn = vel.x * nx + vel.y * ny + vel.z * nz;
+    if (vn < 0) { vel.x -= nx * vn; vel.y -= ny * vn; vel.z -= nz * vn; }
+  }
+  if (pos.y < 1.7) { pos.y = 1.7; if (vel.y < 0) vel.y = 0; }
+}
+
+// ───────────────────────── traffic: cars follow lanes, keep gaps, stop at red signals ─────────────────────────
+const CAR_RANGE = 440, STOP_AT = 20.3;       // stop line + half a car, measured from the intersection centre
+const cars = [];
+let trafficRnd = mulberry32(SEED ^ 0xCA75);
+function spawnCar(c, px, pz, vx, vz, initial) {
+  const r = trafficRnd;
+  c.axis = r() < 0.5 ? 0 : 1; c.dir = r() < 0.5 ? 1 : -1; c.lane = r() < 0.5 ? 0 : 1;
+  const camU = c.axis === 0 ? px : pz, camL = c.axis === 0 ? pz : px, velU = c.axis === 0 ? vx : vz;
+  let u = (r() * 2 - 1) * CAR_RANGE, l = (r() * 2 - 1) * CAR_RANGE;
+  if (!initial) {                                                // enter at the edge, mostly ahead of the camera
+    const edge = CAR_RANGE * (0.93 + r() * 0.06);
+    if (r() < 0.6) u = (Math.abs(velU) > 5 && r() < 0.85 ? Math.sign(velU) : (r() < 0.5 ? -1 : 1)) * edge;
+    else l = (r() < 0.5 ? -1 : 1) * edge;
+  }
+  c.line = Math.round((camL + l) / CELL); c.s = camU + u;
+  c.v0 = 9 + r() * 7; c.v = c.v0 * (0.5 + r() * 0.5); c.seed = r(); c.brake = 0;
+  c.key = (c.line + 5000) * 8 + c.axis * 4 + (c.dir > 0 ? 2 : 0) + c.lane;
+}
+function resetTraffic(px, pz) {
+  trafficRnd = mulberry32(SEED ^ 0xCA75);
+  cars.length = 0;
+  for (let i = 0; i < N_CARS; i++) { const c = {}; spawnCar(c, px, pz, 0, 0, true); cars.push(c); }
+}
+function updateTraffic(dt, time, px, pz, vx, vz) {
+  const on = S.traffic;
+  carMesh.visible = carLMesh.visible = on;
+  if (!on) return;
+  for (const c of cars) {
+    const camU = c.axis === 0 ? px : pz, camL = c.axis === 0 ? pz : px;
+    if (Math.abs(c.s - camU) > CAR_RANGE || Math.abs(c.line * CELL - camL) > CAR_RANGE) spawnCar(c, px, pz, vx, vz, false);
+  }
+  cars.sort((a, b) => a.key - b.key || a.s - b.s);
+  const A = carGeo.attributes.iCar.array, Bk = carGeo.attributes.iCarS.array;
+  for (let i = 0; i < cars.length; i++) {
+    const c = cars[i], lead = cars[i + c.dir];
+    let gap = 1e9;
+    if (lead && lead.key === c.key) gap = Math.abs(lead.s - c.s) - 5.6 + lead.v * lead.v / 12;   // the leader needs room to stop too
+    // next stop line ahead, and the signal that owns it
+    const k = c.dir > 0 ? Math.ceil((c.s + STOP_AT) / CELL) : Math.floor((c.s - STOP_AT) / CELL);
+    const stopGap = c.dir > 0 ? k * CELL - STOP_AT - c.s : c.s - (k * CELL + STOP_AT);
+    const ph = (signalPhase(c.axis === 0 ? k : c.line, c.axis === 0 ? c.line : k) + time / 18) % 1;
+    const green = c.axis === 0 ? ph < 0.45 : (ph >= 0.5 && ph < 0.95);
+    if (!green && stopGap < 70 && stopGap > c.v * c.v / 18 - 1) gap = Math.min(gap, stopGap);
+    // brake as hard as the remaining room demands, so the car always stops short of the line or bumper
+    const room = gap - 1.2;
+    let acc = -14;
+    if (room > 0.3) {
+      const need = c.v * c.v / (2 * room);
+      acc = need > 2.2 ? -Math.min(need * 1.15, 14) : Math.min(2.5, (c.v0 - c.v) * 1.5, (Math.sqrt(4.4 * room) - c.v) * 3);
+    }
+    c.v = Math.max(0, c.v + acc * dt); c.s += c.dir * c.v * dt;
+    c.brake = damp(c.brake, acc < -0.5 || c.v < 0.3 ? 1 : 0, 10, dt);
+    const off = c.dir * (2 + c.lane * 4);
+    if (c.axis === 0) { A[i * 4] = c.s; A[i * 4 + 1] = c.line * CELL + off; A[i * 4 + 2] = c.dir > 0 ? 0 : 1; }
+    else { A[i * 4] = c.line * CELL - off; A[i * 4 + 1] = c.s; A[i * 4 + 2] = c.dir > 0 ? 2 : 3; }
+    A[i * 4 + 3] = c.seed; Bk[i] = c.brake;
+  }
+  carGeo.attributes.iCar.needsUpdate = true; carGeo.attributes.iCarS.needsUpdate = true;
+  carGeo.instanceCount = carLGeo.instanceCount = cars.length;
+}
+
+// ───────────────────────── post-processing ─────────────────────────
+const postScene = new THREE.Scene(), postCam = new THREE.Camera();
+const postMesh = new THREE.Mesh(new THREE.BufferGeometry(), null);
+postMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
+postMesh.frustumCulled = false; postScene.add(postMesh);
+const POST_VS = 'varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }';
+const POST_H = 'varying vec2 vUv; float h21(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }\n';
+const postMat = (fs, uniforms, opts) => new THREE.ShaderMaterial(Object.assign(
+  { uniforms, vertexShader: POST_VS, fragmentShader: POST_H + fs, depthTest: false, depthWrite: false }, opts || {}));
+function runPass(mat, target) { postMesh.material = mat; renderer.setRenderTarget(target); renderer.render(postScene, postCam); }
+
+const matDown = postMat(/* glsl */`
+uniform sampler2D tSrc; uniform vec2 uTexel; uniform float uPre;
+void main(){
+  vec3 c = texture2D(tSrc, vUv).rgb * 4.0;
+  c += texture2D(tSrc, vUv + uTexel * vec2(-1.0, -1.0)).rgb + texture2D(tSrc, vUv + uTexel * vec2(1.0, -1.0)).rgb
+     + texture2D(tSrc, vUv + uTexel * vec2(-1.0, 1.0)).rgb + texture2D(tSrc, vUv + uTexel * vec2(1.0, 1.0)).rgb;
+  c *= 0.125;
+  if (uPre > 0.5) { c = clamp(c, 0.0, 24.0); c *= smoothstep(0.45, 1.8, max(c.r, max(c.g, c.b))); }   // only light blooms
+  gl_FragColor = vec4(c, 1.0);
+}`, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uPre: { value: 0 } });
+
+const matUp = postMat(/* glsl */`
+uniform sampler2D tSrc; uniform vec2 uTexel; uniform float uGain;
+void main(){
+  vec3 c = texture2D(tSrc, vUv + uTexel * vec2(-0.5, -0.5)).rgb + texture2D(tSrc, vUv + uTexel * vec2(0.5, -0.5)).rgb
+         + texture2D(tSrc, vUv + uTexel * vec2(-0.5, 0.5)).rgb + texture2D(tSrc, vUv + uTexel * vec2(0.5, 0.5)).rgb;
+  gl_FragColor = vec4(c * 0.25 * uGain, 1.0);
+}`, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uGain: { value: 0.9 } },
+  { blending: THREE.AdditiveBlending, transparent: true });
+
+// composite: distortion, motion blur, bloom, speed lines, ACES, green grade, trails
+const matComp = postMat(/* glsl */`
+uniform sampler2D tScene, tBloom, tPrev;
+uniform vec2 uRes, uRot;
+uniform float uAspect, uTime, uBoost, uSpeedN, uShock, uTrail, uExposure, uBloom;
+float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
+vec3 aces(vec3 x){ return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+vec3 grade(vec3 c){
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, 0.32);                                              // desaturate everything that is not green
+  vec3 ramp = mix(vec3(0.0, 0.012, 0.005), vec3(0.13, 0.80, 0.30), smoothstep(0.0, 0.6, l));
+  ramp = mix(ramp, vec3(0.80, 1.0, 0.85), smoothstep(0.5, 1.0, l));       // highlights burn to green-white
+  c = mix(c * vec3(0.6, 1.08, 0.66), ramp, 0.55);
+  return c * smoothstep(-0.02, 0.10, l) ;                                 // crush the blacks
+}
+void main(){
+  vec2 uv = vUv, c = uv - 0.5, ca = vec2(c.x * uAspect, c.y), dir = normalize(c + 1e-5);
+  float r = length(ca), ring = 0.0;
+  if (uShock < 1.0) {                                                     // sonic boom: a refracting ring runs outward
+    float w = r - uShock * 1.3;
+    ring = exp(-w * w * 260.0) * (1.0 - uShock);
+    uv -= dir * ring * 0.07 * sin(w * 55.0);
+  }
+  float ang = atan(ca.y, ca.x);
+  uv += dir * (vn(vec2(ang * 6.0, uTime * 9.0)) - 0.5) * 0.014 * uBoost * smoothstep(0.2, 0.75, r);   // air distortion
+  vec2 mv = c * (0.11 * uSpeedN * (0.25 + r)) + uRot;                     // zoom blur from speed + pan blur from turning
+  vec3 col;
+  if (length(mv * uRes) > 1.5) {
+    float j = h21(gl_FragCoord.xy + fract(uTime) * 37.0);
+    col = vec3(0.0);
+    for (int i = 0; i < 8; i++) col += texture2D(tScene, uv - mv * ((float(i) + j) / 8.0)).rgb;
+    col *= 0.125;
+  } else col = texture2D(tScene, uv).rgb;
+  col = clamp(col, 0.0, 64.0);
+  col += texture2D(tBloom, uv).rgb * uBloom;
+  if (uBoost > 0.01) {                                                    // radial speed lines
+    float k = ang * 19.1, seg = floor(k), rnd = h21(vec2(seg, 3.0));
+    float tt = uTime * (2.2 + rnd * 3.5) + rnd * 10.0, rr = r * 1.1 - tt;
+    float on = step(0.55, h21(vec2(seg, floor(rr))));
+    float line = pow(fract(rr), 7.0) * on * (1.0 - smoothstep(0.0, 0.5, abs(fract(k) - 0.5) * (2.0 + 7.0 * rnd)));
+    col += vec3(0.5, 1.0, 0.7) * line * uBoost * smoothstep(0.2, 0.75, r) * 1.6;
+  }
+  col += vec3(0.5, 1.0, 0.7) * ring * 0.45;
+  col = grade(aces(col * uExposure));
+  col = max(col, texture2D(tPrev, vUv).rgb * uTrail);                     // bullet-time trails
+  gl_FragColor = vec4(col, 1.0);
+}`, {
+  tScene: { value: null }, tBloom: { value: null }, tPrev: { value: null }, uRes: { value: new THREE.Vector2() }, uRot: { value: new THREE.Vector2() },
+  uAspect: { value: 1 }, uTime: { value: 0 }, uBoost: { value: 0 }, uSpeedN: { value: 0 }, uShock: { value: 1 }, uTrail: { value: 0 },
+  uExposure: { value: 1.5 }, uBloom: { value: 0.34 },
+});
+
+const matRingW = postMat('uniform sampler2D tSrc; void main(){ gl_FragColor = vec4(sqrt(clamp(texture2D(tSrc, vUv).rgb, 0.0, 1.0)), 1.0); }', { tSrc: { value: null } });
+
+// final: tearing, chromatic aberration, scanlines, vignette, grain, encode
+const matFinal = postMat(/* glsl */`
+uniform sampler2D tSrc;
+uniform float uTime, uCA, uScan, uTear, uFade, uSq;
+void main(){
+  vec2 uv = vUv;
+  if (uTear > 0.0) {
+    float band = floor(uv.y * mix(12.0, 50.0, h21(vec2(floor(uTime * 14.0), 2.0))));
+    float n = h21(vec2(band, floor(uTime * 24.0)));
+    uv.x += (n - 0.5) * 0.14 * uTear * step(0.62, h21(vec2(band + 5.0, floor(uTime * 24.0))));
+  }
+  vec2 c = uv - 0.5; float r2 = dot(c, c);
+  vec2 off = c * (0.002 + uCA) * (0.3 + r2 * 3.2);
+  vec3 col = vec3(texture2D(tSrc, uv + off).r, texture2D(tSrc, uv).g, texture2D(tSrc, uv - off).b);
+  col = mix(col, col * col, uSq);                                          // replayed frames are stored as sqrt
+  col *= 1.0 - (0.05 + 0.4 * uScan) * (0.5 + 0.5 * sin(gl_FragCoord.y * 2.0944));
+  col += vec3(0.05, 0.35, 0.12) * uScan * (1.0 - smoothstep(0.0, 0.04, abs(fract(uv.y * 1.3 - uTime * 0.9) - 0.5)));
+  col *= 1.0 + uScan * (h21(vec2(floor(uTime * 60.0), 7.0)) - 0.5) * 0.5;
+  col *= (1.0 - smoothstep(0.22, 0.92, sqrt(r2))) * 0.6 + 0.4;                     // vignette
+  col = pow(max(col, 0.0), vec3(1.0 / 2.2));
+  float g = h21(floor(gl_FragCoord.xy / 1.5) + fract(uTime) * 91.7) - 0.5;
+  col += g * 0.055 * (1.2 - col.g);                                        // film grain, stronger in the shadows
+  gl_FragColor = vec4(col * uFade, 1.0);
+}`, { tSrc: { value: null }, uTime: { value: 0 }, uCA: { value: 0 }, uScan: { value: 0 }, uTear: { value: 0 }, uFade: { value: 0 }, uSq: { value: 0 } });
+
+const BLOOM_LEVELS = 5, RING = 12;
+let rtScene = null, rtRefl = null, rtAcc = [], rtBloom = [], rtRing = [], accIdx = 0, RW = 2, RH = 2;
+function buildTargets(w, h) {
+  for (const t of [rtScene, rtRefl, ...rtAcc, ...rtBloom, ...rtRing]) if (t) t.dispose();
+  const o = { type: HDR, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, stencilBuffer: false };
+  const hw = Math.max(2, w >> 1), hh = Math.max(2, h >> 1);
+  rtScene = new THREE.WebGLRenderTarget(w, h, Object.assign({}, o, { depthBuffer: true, samples: IS_TOUCH ? 0 : 4 }));
+  rtRefl = new THREE.WebGLRenderTarget(hw, hh, Object.assign({}, o, { depthBuffer: true }));
+  rtAcc = [new THREE.WebGLRenderTarget(w, h, o), new THREE.WebGLRenderTarget(w, h, o)];
+  rtBloom = [];
+  for (let i = 0, bw = hw, bh = hh; i < BLOOM_LEVELS; i++, bw >>= 1, bh >>= 1) rtBloom.push(new THREE.WebGLRenderTarget(Math.max(2, bw), Math.max(2, bh), o));
+  rtRing = [];
+  for (let i = 0; i < RING; i++) rtRing.push(new THREE.WebGLRenderTarget(hw, hh, Object.assign({}, o, { type: THREE.UnsignedByteType })));
+  RW = w; RH = h;
+  U.uRes.value.set(w, h); U.uRefl.value = rtRefl.texture;
+  matComp.uniforms.uRes.value.set(w, h); matComp.uniforms.uAspect.value = w / h;
+  for (const t of rtAcc) { renderer.setRenderTarget(t); renderer.clear(); }
+}
+let quality = 1;
+function resize() {
+  const cw = Math.max(1, innerWidth), ch = Math.max(1, innerHeight), dpr = Math.min(devicePixelRatio || 1, 2);
+  const cap = Math.min(1, Math.sqrt((IS_TOUCH ? 1.0e6 : 2.3e6) / (cw * dpr * ch * dpr)));   // pixel budget
+  const w = Math.max(64, Math.round(cw * dpr * cap * quality)), h = Math.max(64, Math.round(ch * dpr * cap * quality));
+  renderer.setPixelRatio(1); renderer.setSize(w, h, false);
+  camera.aspect = cw / ch; camera.updateProjectionMatrix();
+  buildTargets(w, h);
+}
+
+const replay = { left: 0, i: 0, w: 0, n: 0 };     // deja vu: stored frames play again while the world holds still
+const MIRROR = new THREE.Matrix4().makeScale(1, -1, 1);
+function renderScene() {
+  const px = camera.position.x, pz = camera.position.z;
+  if (replay.left > 0) {
+    matFinal.uniforms.tSrc.value = rtRing[(replay.w + replay.i) % RING].texture; matFinal.uniforms.uSq.value = 1;
+    replay.i = (replay.i + 1) % Math.max(1, replay.n); replay.left--;
+    runPass(matFinal, null); return;
+  }
+  // 1. mirrored pass for the wet ground
+  const doRefl = camera.position.y < CLOUD_Y - 40;
+  matGround.uniforms.uReflOn.value = doRefl ? 1 : 0;
+  if (doRefl) {
+    U.uMirror.value = -1;
+    ground.visible = rain.visible = grain.visible = steam.visible = false;
+    chunkLOD(px, pz, true);
+    reflCam.projectionMatrix.copy(camera.projectionMatrix); reflCam.projectionMatrixInverse.copy(camera.projectionMatrixInverse);
+    reflCam.matrixWorld.multiplyMatrices(MIRROR, camera.matrixWorld); reflCam.matrixWorldInverse.copy(reflCam.matrixWorld).invert();
+    renderer.setRenderTarget(rtRefl); renderer.clear(); renderer.render(scene, reflCam);
+    U.uMirror.value = 1;
+  }
+  // 2. main pass
+  ground.visible = steam.visible = true; rain.visible = grain.visible = S.rain;
+  chunkLOD(px, pz, false);
+  renderer.setRenderTarget(rtScene); renderer.clear(); renderer.render(scene, camera);
+  // 3. bloom pyramid
+  let src = rtScene;
+  for (let i = 0; i < BLOOM_LEVELS; i++) {
+    matDown.uniforms.tSrc.value = src.texture; matDown.uniforms.uTexel.value.set(1 / src.width, 1 / src.height); matDown.uniforms.uPre.value = i === 0 ? 1 : 0;
+    runPass(matDown, rtBloom[i]); src = rtBloom[i];
+  }
+  for (let i = BLOOM_LEVELS - 1; i > 0; i--) {
+    matUp.uniforms.tSrc.value = rtBloom[i].texture; matUp.uniforms.uTexel.value.set(1 / rtBloom[i].width, 1 / rtBloom[i].height);
+    runPass(matUp, rtBloom[i - 1]);
+  }
+  // 4. composite into the accumulation buffer, 5. remember the frame, 6. present
+  const cur = rtAcc[accIdx], prev = rtAcc[1 - accIdx]; accIdx = 1 - accIdx;
+  const cu = matComp.uniforms;
+  cu.tScene.value = rtScene.texture; cu.tBloom.value = rtBloom[0].texture; cu.tPrev.value = prev.texture;
+  runPass(matComp, cur);
+  matRingW.uniforms.tSrc.value = cur.texture;
+  runPass(matRingW, rtRing[replay.w]); replay.w = (replay.w + 1) % RING; replay.n = Math.min(RING, replay.n + 1);
+  matFinal.uniforms.tSrc.value = cur.texture; matFinal.uniforms.uSq.value = 0;
+  runPass(matFinal, null);
+}
+
+// ───────────────────────── player state + input ─────────────────────────
+const P = {
+  pos: new THREE.Vector3(0, 120, 50), vel: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0,
+  boost: 0, slow: 0, yawRate: 0, pitchRate: 0, speed: 0, shock: 1, boomArmed: true,
+};
+const keys = {};
+const touch = { fx: 0, fy: 0, boost: false, slow: false };
+let cineOn = false;
+const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyQ', 'KeyE', 'ShiftLeft', 'ShiftRight'];
+
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (MOVE_KEYS.includes(e.code) || e.code === 'KeyF') e.preventDefault();
+  if (e.repeat) return;
+  keys[e.code] = true;
+  if (cineOn && MOVE_KEYS.includes(e.code)) setCine(false);
+  if (e.code === 'Space' && !cineOn) P.vel.y += 26;             // launch kick
+  if (e.code === 'KeyC') setCine(!cineOn);
+  else if (e.code === 'KeyH') $('ui').classList.toggle('hidden');
+  else if (e.code === 'KeyR') newSeed();
+  else if (e.code === 'Digit1') toggle('rain');
+  else if (e.code === 'Digit2') toggle('traffic');
+  else if (e.code === 'Digit3') toggle('glitch');
+  else if (e.code === 'Digit4') toggle('code');
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+
+canvas.addEventListener('click', () => {
+  startAudio();
+  if (IS_TOUCH || document.pointerLockElement === canvas) return;
+  const lock = canvas.requestPointerLock();
+  if (lock && lock.catch) lock.catch(() => {});                  // rejects if Esc was pressed a moment ago
+});
+document.addEventListener('mousemove', e => {
+  if (document.pointerLockElement !== canvas || cineOn) return;
+  P.yaw -= e.movementX * 0.0021; P.pitch = clamp(P.pitch - e.movementY * 0.0021, -1.54, 1.54);
+});
+// touch: left stick moves, dragging anywhere else looks around
+{
+  const stick = $('stick'), knob = $('knob'); let sid = -1, lid = -1, lx = 0, ly = 0;
+  const setStick = (e) => {
+    const r = stick.getBoundingClientRect(); let dx = (e.clientX - r.left) / r.width * 2 - 1, dy = (e.clientY - r.top) / r.height * 2 - 1;
+    const l = Math.hypot(dx, dy); if (l > 1) { dx /= l; dy /= l; }
+    touch.fx = dx; touch.fy = -dy; knob.style.transform = `translate(${dx * 37}px,${dy * 37}px)`;
+  };
+  stick.addEventListener('pointerdown', e => { sid = e.pointerId; stick.setPointerCapture(sid); setStick(e); startAudio(); if (cineOn) setCine(false); });
+  stick.addEventListener('pointermove', e => { if (e.pointerId === sid) setStick(e); });
+  const endStick = e => { if (e.pointerId === sid) { sid = -1; touch.fx = touch.fy = 0; knob.style.transform = ''; } };
+  stick.addEventListener('pointerup', endStick); stick.addEventListener('pointercancel', endStick);
+  canvas.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse' && lid < 0) { lid = e.pointerId; lx = e.clientX; ly = e.clientY; } });
+  canvas.addEventListener('pointermove', e => {
+    if (e.pointerId !== lid || cineOn) return;
+    P.yaw -= (e.clientX - lx) * 0.005; P.pitch = clamp(P.pitch - (e.clientY - ly) * 0.005, -1.54, 1.54); lx = e.clientX; ly = e.clientY;
+  });
+  const endLook = e => { if (e.pointerId === lid) lid = -1; };
+  canvas.addEventListener('pointerup', endLook); canvas.addEventListener('pointercancel', endLook);
+  const hold = (id, key) => {
+    const b = $(id);
+    b.addEventListener('pointerdown', e => { e.preventDefault(); touch[key] = true; startAudio(); });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, () => { touch[key] = false; });
+  };
+  hold('bBoost', 'boost'); hold('bTime', 'slow');
+  $('bCine').addEventListener('click', () => { startAudio(); setCine(!cineOn); });
+}
+
+// ───────────────────────── manual flight ─────────────────────────
+function stepManual(dt, rdt) {
+  let f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) + touch.fy, s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + touch.fx;
+  const up = (keys.Space ? 1 : 0) + (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0);
+  const shift = keys.ShiftLeft || keys.ShiftRight || touch.boost;
+  if (shift && f === 0 && s === 0 && up === 0) f = 1;            // boost alone = fly where you look
+  P.boost = damp(P.boost, shift ? 1 : 0, shift ? 2.2 : 3.5, rdt);
+  const cp = Math.cos(P.pitch), fx = -Math.sin(P.yaw) * cp, fy = Math.sin(P.pitch), fz = -Math.cos(P.yaw) * cp;
+  const rx = Math.cos(P.yaw), rz = -Math.sin(P.yaw);
+  let ax = fx * f + rx * s, ay = fy * f + up, az = fz * f + rz * s;
+  const al = Math.hypot(ax, ay, az); if (al > 1) { ax /= al; ay /= al; az /= al; }
+  const vmax = lerp(58, MACH * 1.02, P.boost), k = 1 - Math.exp(-(al > 0.01 ? 1.7 : 2.3) * dt);
+  P.vel.x += (ax * vmax - P.vel.x) * k; P.vel.y += (ay * vmax - P.vel.y) * k; P.vel.z += (az * vmax - P.vel.z) * k;
+  const steps = Math.max(1, Math.ceil(P.vel.length() * dt / 2));   // sub-steps so nothing tunnels at Mach 1
+  for (let i = 0; i < steps; i++) { P.pos.addScaledVector(P.vel, dt / steps); collide(P.pos, P.vel, 2.6); }
+  if (P.pos.y > 900) { P.pos.y = 900; P.vel.y = Math.min(P.vel.y, 0); }
+  // bank into turns and strafes
+  const yr = (P.yaw - P._yaw0) / Math.max(rdt, 1e-4), pr = (P.pitch - P._pitch0) / Math.max(rdt, 1e-4);
+  P._yaw0 = P.yaw; P._pitch0 = P.pitch;
+  P.yawRate = damp(P.yawRate, yr, 10, rdt); P.pitchRate = damp(P.pitchRate, pr, 10, rdt);
+  const sp = P.vel.length();
+  const want = clamp(P.yawRate * 0.22 * (0.4 + sp / 120), -0.65, 0.65) - s * 0.16 * Math.min(1, sp / 40);
+  P.roll = damp(P.roll, want, 4.5, rdt);
+  camera.position.copy(P.pos);
+  camera.rotation.set(P.pitch, P.yaw, P.roll, 'YXZ');
+}
+P._yaw0 = 0; P._pitch0 = 0;
+
+// ───────────────────────── cinematic flight: a spline that stays over the road grid ─────────────────────────
+// The air above every road is always free, so a path made of road-line waypoints cannot hit a building.
+const cine = { pts: [], i: 1, u: 0, v: 60, rnd: null, step: 0, f: new THREE.Vector3(0, 0, -1), right: new THREE.Vector3(1, 0, 0), roll: 0, head: 0 };
+const pl = { axis: 0, dir: 1, line: 0, s: 0, y: 100, wv: 1 };     // planner cursor: which road and where along it
+const cPush = (x, y, z, v, b) => cine.pts.push({ x, y, z, v, b: b || 0 });
+const plPush = (lat, v, b) => pl.axis === 0 ? cPush(pl.s, pl.y, pl.line * CELL + lat, v, b) : cPush(pl.line * CELL + lat, pl.y, pl.s, v, b);
+function flankMin(s) {                                            // the lower of the two roofs beside the road
+  const i = Math.floor(s / CELL);
+  const a = pl.axis === 0 ? getCell(i, pl.line) : getCell(pl.line, i), b = pl.axis === 0 ? getCell(i, pl.line - 1) : getCell(pl.line - 1, i);
+  return Math.min(a.maxH, b.maxH);
+}
+const MOVES = {
+  skim(n) {                                                       // roof level, weaving, towers rising on both sides
+    for (let k = 0; k < n; k++) {
+      pl.s += pl.dir * 100; pl.y = clamp(clamp(flankMin(pl.s) + 9, 34, 180), pl.y - 70, pl.y + 70); pl.wv = -pl.wv; plPush(pl.wv * 3.5, 90);
+    }
+  },
+  dive() {
+    const y0 = pl.y, run = Math.max(140, y0 * 0.95);
+    for (const [ds, t] of [[0.32, 0.62], [0.36, 0.2], [0.32, 0]]) { pl.s += pl.dir * run * ds; pl.y = lerp(12, y0, t); plPush(0, 86); }
+  },
+  canyon(n) {
+    for (let k = 0; k < n; k++) { pl.s += pl.dir * 100; pl.y = clamp(pl.y + (cine.rnd() - 0.5) * 8, 8, 20); pl.wv = -pl.wv; plPush(pl.wv * 4, 70); }
+  },
+  turn() {                                                        // banked 90 degree arc through the next intersection
+    const k = pl.dir > 0 ? Math.ceil((pl.s + 45) / CELL) : Math.floor((pl.s - 45) / CELL), c = k * CELL, nd = cine.rnd() < 0.5 ? 1 : -1;
+    if (Math.abs(c - pl.dir * 42 - pl.s) > 15) { pl.s = c - pl.dir * 42; plPush(0, 52); }
+    pl.s = c - pl.dir * 18; plPush(0, 36);
+    pl.s = c - pl.dir * 5.27; plPush(nd * 5.27, 31);
+    const old = pl.line; pl.axis = 1 - pl.axis; pl.line = k; pl.dir = nd; pl.s = old * CELL + nd * 18; plPush(0, 36);
+    pl.s += nd * 24; plPush(0, 56);
+  },
+  climb() {                                                       // pull up and go supersonic into the cloud deck
+    const y0 = pl.y;
+    pl.s += pl.dir * 36; pl.y = y0 + 6; plPush(0, 85);
+    pl.s += pl.dir * 30; pl.y = y0 + 48; plPush(0, 130, 1);
+    pl.s += pl.dir * 12; pl.y = y0 + 150; plPush(0, 250, 1);
+    pl.s += pl.dir * 2; pl.y = Math.max(360, y0 + 260); plPush(0, 350, 1);
+    pl.y = CLOUD_Y + 30; plPush(0, 350, 1);
+    pl.s += pl.dir * 20; pl.y = CLOUD_Y + 85; plPush(0, 100);
+  },
+  descend() {                                                     // nose over, dive at the grid of lights, level out
+    pl.s += pl.dir * 70; pl.y = CLOUD_Y + 70; plPush(0, 90);
+    pl.s += pl.dir * 80; pl.y = CLOUD_Y - 60; plPush(0, 120);
+    pl.s += pl.dir * 80; pl.y = 400; plPush(0, 150);
+    pl.s += pl.dir * 100; pl.y = 250; plPush(0, 135);
+    pl.s += pl.dir * 130; pl.y = clamp(flankMin(pl.s) + 30, 60, 240); plPush(0, 95);
+  },
+};
+const CINE_SEQ = [['skim', 1], ['dive'], ['turn'], ['climb'], ['descend'], ['skim', 3], ['dive'],
+  ['canyon', 2], ['turn'], ['canyon', 1], ['turn'], ['canyon', 1], ['climb'], ['descend']];
+
+function startCine() {
+  cine.rnd = mulberry32(SEED ^ 0xC1E); cine.pts.length = 0; cine.i = 1; cine.u = 0; cine.step = 0; cine.v = Math.max(40, P.vel.length());
+  const p = P.pos, fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw);
+  pl.axis = Math.abs(fx) > Math.abs(fz) ? 0 : 1; pl.dir = (pl.axis === 0 ? fx : fz) >= 0 ? 1 : -1; pl.wv = 1;
+  const lat = pl.axis === 0 ? p.z : p.x;
+  pl.line = Math.round(lat / CELL); pl.s = pl.axis === 0 ? p.x : p.z;
+  let safe = p.y;
+  if (Math.abs(lat - pl.line * CELL) > 8) {                       // not over a road: clear the roofs first
+    const ix = Math.floor(p.x / CELL), iz = Math.floor(p.z / CELL); let t = 0;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) t = Math.max(t, getCell(ix + a, iz + b).top);
+    safe = Math.max(p.y, t + 15);
+  }
+  cPush(p.x - fx * 20, p.y, p.z - fz * 20, cine.v); cPush(p.x, p.y, p.z, cine.v);
+  if (safe > p.y + 2) cPush(p.x + fx * 4, safe, p.z + fz * 4, 70);
+  pl.y = safe; pl.s += pl.dir * 70; plPush(0, 88);
+  if (pl.y < 32) cine.step = 2;                                    // already low: start with the canyon run
+  else pl.y = Math.min(pl.y, Math.max(180, pl.y - 70));
+  const cp = Math.cos(P.pitch);
+  cine.f.set(fx * cp, Math.sin(P.pitch), fz * cp).normalize();
+  cine.right.set(Math.cos(P.yaw), 0, -Math.sin(P.yaw)); cine.roll = P.roll; cine.head = P.yaw;
+}
+function cineFill() {
+  while (cine.pts.length - cine.i < 8) { const m = CINE_SEQ[cine.step % CINE_SEQ.length]; MOVES[m[0]](m[1]); cine.step++; }
+  if (cine.i > 40) { cine.pts.splice(0, cine.i - 2); cine.i = 2; }
+}
+// centripetal Catmull-Rom (no overshoot where waypoints are unevenly spaced)
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
+function crEval(i, u, out) {
+  const n = cine.pts.length;
+  while (u >= 1 && i < n - 3) { u -= 1; i++; }
+  const p0 = cine.pts[i - 1], p1 = cine.pts[i], p2 = cine.pts[i + 1], p3 = cine.pts[i + 2];
+  const dd = (a, b) => Math.sqrt(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)) + 1e-3;
+  const t1 = dd(p0, p1), t2 = t1 + dd(p1, p2), t3 = t2 + dd(p2, p3), t = lerp(t1, t2, u);
+  const L = (pa, pb, ta, tb, o) => { const w = (t - ta) / (tb - ta); o.x = lerp(pa.x, pb.x, w); o.y = lerp(pa.y, pb.y, w); o.z = lerp(pa.z, pb.z, w); return o; };
+  const A1 = L(p0, p1, 0, t1, _a), A2 = L(p1, p2, t1, t2, _b), A3 = L(p2, p3, t2, t3, _c);
+  const B1 = L(A1, A2, 0, t2, _a), B2 = L(A2, A3, t1, t3, _d);
+  return L(B1, B2, t1, t2, out);
+}
+function cineAhead(dist, out) {                                   // a point `dist` metres further along the path
+  let i = cine.i, u = cine.u;
+  for (let g = 0; g < 12; g++) {
+    const p1 = cine.pts[i], p2 = cine.pts[i + 1], len = Math.hypot(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z) + 1e-3, left = (1 - u) * len;
+    if (dist <= left || i >= cine.pts.length - 3) { u += dist / len; break; }
+    dist -= left; i++; u = 0;
+  }
+  return crEval(i, Math.min(u, 0.999), out);
+}
+const _p = new THREE.Vector3(), _q = new THREE.Vector3(), _t = new THREE.Vector3(), _up = new THREE.Vector3();
+const _m = new THREE.Matrix4(), _qr = new THREE.Quaternion(), Z_AXIS = new THREE.Vector3(0, 0, 1), WORLD_UP = new THREE.Vector3(0, 1, 0);
+function stepCine(dt, rdt) {
+  cineFill();
+  const a = cine.pts[cine.i], b = cine.pts[cine.i + 1];
+  crEval(cine.i, cine.u, _p); crEval(cine.i, cine.u + 0.02, _q);
+  const dPdu = Math.max(1e-3, _q.distanceTo(_p) / 0.02), vT = lerp(a.v, b.v, cine.u);
+  cine.v = damp(cine.v, vT, vT > cine.v ? 1.6 : 2.4, rdt);
+  cine.u += cine.v * dt / dPdu;
+  while (cine.u >= 1) { cine.u -= 1; cine.i++; cineFill(); }
+  crEval(cine.i, cine.u, _p);
+  P.vel.copy(_p).sub(P.pos).divideScalar(Math.max(rdt, 1e-4)).clampLength(0, 420);
+  P.pos.copy(_p);
+  P.boost = damp(P.boost, b.b ? 1 : 0, b.b ? 2.2 : 3, rdt);
+  // look a little ahead of the camera, like a chase drone
+  cineAhead(14 + cine.v * 0.16, _q); _t.copy(_q).sub(_p);
+  if (_t.lengthSq() > 1e-6) cine.f.lerp(_t.normalize(), 1 - Math.exp(-6 * rdt)).normalize();
+  const f = cine.f;
+  // carry the right vector along the path, then ease it level unless the flight is near vertical
+  cine.right.addScaledVector(f, -cine.right.dot(f));
+  if (cine.right.lengthSq() < 1e-6) cine.right.set(1, 0, 0);
+  cine.right.normalize();
+  const lvl = 1 - smooth(0.8, 0.97, Math.abs(f.y));
+  if (lvl > 0) {
+    _up.crossVectors(f, WORLD_UP).normalize();
+    cine.right.lerp(_up, (1 - Math.exp(-3 * rdt)) * lvl);
+    if (cine.right.lengthSq() < 1e-4) cine.right.copy(_up);
+    cine.right.addScaledVector(f, -cine.right.dot(f)).normalize();
+  }
+  _up.crossVectors(cine.right, f);
+  // bank from the turn rate
+  let yr = 0;
+  if (lvl > 0.05) {
+    const h = Math.atan2(-f.x, -f.z); let dh = h - cine.head; dh -= Math.round(dh / TAU) * TAU;
+    yr = dh / Math.max(rdt, 1e-4) * lvl; cine.head = h; P.yaw = h;
+  }
+  P.yawRate = damp(P.yawRate, yr, 8, rdt);
+  const pitch = Math.asin(clamp(f.y, -1, 1));
+  P.pitchRate = damp(P.pitchRate, (pitch - P.pitch) / Math.max(rdt, 1e-4), 8, rdt); P.pitch = pitch;
+  cine.roll = damp(cine.roll, clamp(Math.atan(P.yawRate * cine.v * Math.hypot(f.x, f.z) / 45), -0.9, 0.9), 3.5, rdt); P.roll = cine.roll;
+  _t.copy(f).negate();
+  camera.quaternion.setFromRotationMatrix(_m.makeBasis(cine.right, _up, _t)).multiply(_qr.setFromAxisAngle(Z_AXIS, cine.roll));
+  camera.position.copy(_p);
+}
+function setCine(on) {
+  if (on === cineOn) return;
+  cineOn = on;
+  if (on) startCine(); else { P._yaw0 = P.yaw; P._pitch0 = P.pitch; }
+}
+
+// ───────────────────────── audio: everything is synthesised, silent until the first click ─────────────────────────
+let AC = null, master = null, lpMaster = null, rainGain = null, windGain = null, windF = null, noiseBuf = null;
+const droneOscs = [];
+function startAudio() {
+  if (AC) { if (AC.state === 'suspended') AC.resume(); return; }
+  const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
+  AC = new Ctx();
+  master = AC.createGain(); master.gain.value = 0;
+  lpMaster = AC.createBiquadFilter(); lpMaster.type = 'lowpass'; lpMaster.frequency.value = 18000;
+  const comp = AC.createDynamicsCompressor();
+  master.connect(lpMaster); lpMaster.connect(comp); comp.connect(AC.destination);
+  master.gain.linearRampToValueAtTime(0.9, AC.currentTime + 2.5);
+  noiseBuf = AC.createBuffer(1, AC.sampleRate * 3, AC.sampleRate);
+  const nd = noiseBuf.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  const noise = () => { const s = AC.createBufferSource(); s.buffer = noiseBuf; s.loop = true; s.start(); return s; };
+  // low drone: detuned oscillators through a slowly moving lowpass
+  const dl = AC.createBiquadFilter(); dl.type = 'lowpass'; dl.frequency.value = 150; dl.Q.value = 3;
+  const dg = AC.createGain(); dg.gain.value = 0.34; dl.connect(dg); dg.connect(master);
+  for (const [fq, type] of [[41.2, 'sawtooth'], [41.55, 'sawtooth'], [61.9, 'sine'], [82.7, 'triangle']]) {
+    const o = AC.createOscillator(), g = AC.createGain(); o.type = type; o.frequency.value = fq; g.gain.value = 0.3;
+    o.connect(g); g.connect(dl); o.start(); droneOscs.push(o);
+  }
+  const lfo = AC.createOscillator(), lg = AC.createGain(); lfo.frequency.value = 0.07; lg.gain.value = 60; lfo.connect(lg); lg.connect(dl.frequency); lfo.start();
+  // rain hiss
+  const rh = AC.createBiquadFilter(), rl = AC.createBiquadFilter(); rh.type = 'highpass'; rh.frequency.value = 1700; rl.type = 'lowpass'; rl.frequency.value = 9000;
+  rainGain = AC.createGain(); rainGain.gain.value = 0; noise().connect(rh); rh.connect(rl); rl.connect(rainGain); rainGain.connect(master);
+  // wind: its pitch and level follow the flight speed
+  windF = AC.createBiquadFilter(); windF.type = 'bandpass'; windF.frequency.value = 300; windF.Q.value = 0.8;
+  windGain = AC.createGain(); windGain.gain.value = 0; noise().connect(windF); windF.connect(windGain); windGain.connect(master);
+}
+function updateAudio() {
+  if (!AC) return;
+  const t = AC.currentTime, sn = clamp(P.speed / MACH, 0, 1.1);
+  rainGain.gain.setTargetAtTime(S.rain ? 0.15 * (1 - U.uCloud.value * 0.7) : 0, t, 0.25);
+  windGain.gain.setTargetAtTime(0.015 + 0.42 * Math.pow(sn, 1.5), t, 0.15);
+  windF.frequency.setTargetAtTime(240 + 1500 * sn, t, 0.15);
+  lpMaster.frequency.setTargetAtTime(lerp(18000, 420, P.slow), t, 0.08);            // bullet-time: the world goes underwater
+  for (const o of droneOscs) o.detune.setTargetAtTime(-900 * P.slow, t, 0.12);
+}
+function thunder(delay, amp) {
+  if (!AC) return;
+  const t = AC.currentTime + delay, s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  s.buffer = noiseBuf; s.loop = true; f.type = 'lowpass';
+  f.frequency.setValueAtTime(420, t); f.frequency.exponentialRampToValueAtTime(55, t + 3.6);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(amp, t + 0.06);
+  g.gain.exponentialRampToValueAtTime(amp * 0.35, t + 0.5); g.gain.exponentialRampToValueAtTime(amp * 0.6, t + 0.95);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 4.3);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t, Math.random() * 2); s.stop(t + 4.5);
+}
+function chirp(n) {
+  if (!AC) return;
+  let t = AC.currentTime;
+  for (let i = 0; i < n; i++) {
+    const o = AC.createOscillator(), g = AC.createGain(), fq = 700 + Math.random() * 2600;
+    o.type = Math.random() < 0.5 ? 'sine' : 'triangle';
+    o.frequency.setValueAtTime(fq, t); o.frequency.exponentialRampToValueAtTime(fq * (Math.random() < 0.5 ? 0.55 : 1.7), t + 0.05);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.065);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.08);
+    t += 0.04 + Math.random() * 0.05;
+  }
+}
+function sonicBoom() {
+  if (!AC) return;
+  const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(96, t); o.frequency.exponentialRampToValueAtTime(25, t + 0.9);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(1.0, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.7);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + 1.8);
+  const s = AC.createBufferSource(), f = AC.createBiquadFilter(), ng = AC.createGain();
+  s.buffer = noiseBuf; f.type = 'lowpass'; f.frequency.setValueAtTime(900, t); f.frequency.exponentialRampToValueAtTime(70, t + 1.1);
+  ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.8, t + 0.015); ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
+  s.connect(f); f.connect(ng); ng.connect(master); s.start(t); s.stop(t + 1.4);
+}
+
+// ───────────────────────── glitches + lightning ─────────────────────────
+const fx = { scan: 0, tear: 0, ca: 0, nextGlitch: 5, force: null, flashT: 9, flashAmp: 0, nextFlash: 6, slots: [null, null] };
+function pickBuilding() {                                         // a tall building in front of the camera
+  const fwd = camera.getWorldDirection(_t); let best = null, n = 0;
+  for (const ch of chunks.values()) {
+    if (ch.dist > 520) continue;
+    for (const c of ch.cells) for (const b of c.boxes) {
+      if (b[9] !== 0 || b[4] < 30) continue;
+      const dx = b[0] - P.pos.x, dz = b[2] - P.pos.z, dy = b[1] + b[4] * 0.5 - P.pos.y, d = Math.hypot(dx, dy, dz);
+      if (d < 50 || d > 420 || (dx * fwd.x + dy * fwd.y + dz * fwd.z) / d < 0.72) continue;
+      if (Math.random() * ++n < 1) best = b;
+    }
+  }
+  return best;
+}
+function triggerGlitch(kind) {
+  const r = Math.random();
+  kind = kind || (r < 0.55 ? 'dissolve' : r < 0.8 ? 'scan' : 'dejavu');
+  if (kind === 'dissolve') {                                      // a building turns into wireframe and code, then comes back
+    const b = pickBuilding();
+    if (b) { fx.slots[fx.slots[0] ? 1 : 0] = { x: b[10], z: b[11], t: 0, dur: 1.5 + Math.random() * 0.9 }; fx.scan = Math.max(fx.scan, 0.25); chirp(5); return; }
+  }
+  if (kind === 'dejavu' && replay.n === RING) { replay.i = 0; replay.left = RING * 2; chirp(3); return; }   // the last frames run twice more
+  fx.scan = 1; fx.tear = 1; fx.ca = 0.007; chirp(4);              // scanline flicker + tearing
+}
+function updateFx(rdt) {
+  for (let i = 0; i < 2; i++) {
+    const g = fx.slots[i], u = i === 0 ? U.uGlitchA.value : U.uGlitchB.value;
+    if (g) { g.t += rdt; if (g.t >= g.dur) fx.slots[i] = null; }
+    if (!fx.slots[i]) { u.set(1e9, 1e9, 0, 0); continue; }
+    const k = g.t / g.dur;
+    u.set(g.x, g.z, smooth(0, 0.3, k) * (1 - smooth(0.68, 1, k)), 0);
+  }
+  fx.scan = Math.max(0, fx.scan - rdt * 2.2); fx.tear = Math.max(0, fx.tear - rdt * 2.6); fx.ca = Math.max(0, fx.ca - rdt * 0.05);
+  if (S.glitch > 0 && started) {
+    fx.nextGlitch -= rdt;
+    if (fx.nextGlitch <= 0) { triggerGlitch(fx.force); fx.force = null; fx.nextGlitch = GLITCH_GAP[S.glitch] * (0.6 + Math.random() * 0.8); }
+  }
+  fx.flashT += rdt; fx.nextFlash -= rdt * lerp(1, 0.15, P.slow);
+  if (fx.nextFlash <= 0 && started) {
+    fx.nextFlash = (U.uCloud.value > 0.5 ? 2.2 : 7) + Math.random() * 9; fx.flashT = 0; fx.flashAmp = 1.0 + Math.random() * 1.2;
+    const a = Math.random() * TAU; U.uFlashDir.value.set(Math.cos(a) * 0.7, 0.6, Math.sin(a) * 0.7).normalize();
+    thunder(0.25 + Math.random() * 1.6, 0.3 + fx.flashAmp * 0.25);
+  }
+  const ft = fx.flashT;
+  U.uFlash.value = fx.flashAmp * Math.max(Math.exp(-ft * 9), ft > 0.16 ? 0.75 * Math.exp(-(ft - 0.16) * 11) : 0, ft > 0.42 ? 0.4 * Math.exp(-(ft - 0.42) * 7) : 0);
+}
+
+// ───────────────────────── UI ─────────────────────────
+function refreshUI() {
+  $('tRain').textContent = '[1] RAIN ' + (S.rain ? 'ON' : 'OFF');
+  $('tTraffic').textContent = '[2] TRAFFIC ' + (S.traffic ? 'ON' : 'OFF');
+  $('tGlitch').textContent = '[3] GLITCH ' + GLITCH_NAMES[S.glitch];
+  $('tCode').textContent = '[4] CODE ' + CODE_NAMES[S.code];
+  U.uCode.value = CODE_MUL[S.code]; matGround.uniforms.uRainOn.value = S.rain ? 1 : 0;
+}
+function toggle(k) {
+  if (k === 'rain') S.rain = !S.rain;
+  else if (k === 'traffic') S.traffic = !S.traffic;
+  else if (k === 'glitch') { S.glitch = (S.glitch + 1) % 4; fx.nextGlitch = Math.min(fx.nextGlitch, GLITCH_GAP[S.glitch] * 0.5); }
+  else S.code = (S.code + 1) % 3;
+  refreshUI();
+}
+for (const [id, k] of [['tRain', 'rain'], ['tTraffic', 'traffic'], ['tGlitch', 'glitch'], ['tCode', 'code']])
+  $(id).addEventListener('click', e => { toggle(k); e.currentTarget.blur(); });
+
+// start a few blocks before the tallest district nearby, on a road, flying toward it
+function placeStart() {
+  let best = -1, bx = 0, bz = 0;
+  for (let iz = -10; iz <= 10; iz++) for (let ix = -10; ix <= 10; ix++) {
+    const v = vnoise(ix / 5, iz / 5, 0x51); if (v > best) { best = v; bx = ix; bz = iz; }
+  }
+  const iz = bz - 4, y = clamp(Math.min(getCell(bx, iz).maxH, getCell(bx - 1, iz).maxH) + 14, 40, 300);
+  P.pos.set(bx * CELL, y, iz * CELL + 50); P.vel.set(0, 0, 0);
+  P.yaw = P._yaw0 = Math.PI; P.pitch = P._pitch0 = 0; P.roll = 0; P.boost = 0;
+  camera.position.copy(P.pos); camera.rotation.set(0, P.yaw, 0, 'YXZ');
+}
+function newSeed() {
+  SEED = (Math.random() * 4294967296) >>> 0;
+  try { history.replaceState(null, '', '#seed=' + seedHex()); } catch (e) { /* file:// in some browsers */ }
+  resetCity(); placeStart(); resetTraffic(P.pos.x, P.pos.z);
+  fx.slots[0] = fx.slots[1] = null; fx.scan = 1; fx.tear = 1; fx.ca = 0.008; chirp(6);
+  if (cineOn) startCine();
+}
+
+// ───────────────────────── intro ─────────────────────────
+let started = false, fade = 0;
+(async () => {
+  const wait = ms => new Promise(r => setTimeout(r, ms)), el = $('typed');
+  await wait(900);
+  for (const ch of 'wake up...') { el.textContent += ch; await wait(90 + Math.random() * 110); }
+  await wait(1300);
+  $('intro').classList.add('gone');
+  started = true; fx.nextGlitch = 2.8; fx.force = 'dissolve';
+  if (!MOVE_KEYS.some(k => keys[k])) setCine(true);              // already flying by hand: leave the controls alone
+  setTimeout(() => $('hint').classList.add('fade'), 5000);
+})();
+
+// ───────────────────────── main loop ─────────────────────────
+let last = performance.now(), worldT = 0, rainT = 0, realT = 0, fpsT = last, fpsN = 0, fps = 60, lowN = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const rdt = clamp((now - last) / 1000, 0.001, 0.05); last = now;
+  realT += rdt; fpsN++;
+  if (now - fpsT >= 500) {
+    fps = fpsN * 1000 / (now - fpsT); fpsT = now; fpsN = 0;
+    $('stats').textContent = `FPS ${fps.toFixed(0)}\nSEED ${seedHex()}\nMACH ${(P.speed / MACH).toFixed(2)}`
+      + (cineOn ? '\nCINEMATIC' : '') + (P.slow > 0.5 ? '\nBULLET TIME' : '');
+    // hold 60 FPS: if the frame rate stays low, render fewer pixels
+    if (started && realT > 8 && !document.hidden && fps < 48) { if (++lowN >= 3 && quality > 0.56) { quality = Math.max(0.55, quality * 0.85); lowN = 0; resize(); } }
+    else lowN = 0;
+  }
+  const fu = matFinal.uniforms;
+  fu.uTime.value = realT;
+  if (replay.left > 0) {                                          // deja vu: the world holds still while stored frames run again
+    fu.uScan.value = 0.55; fu.uCA.value = 0.006; fu.uTear.value = 0;
+    renderScene();
+    if (replay.left === 0) { fx.scan = 0.6; fx.tear = 0.5; }
+    return;
+  }
+  P.slow = damp(P.slow, (keys.KeyF || touch.slow) ? 1 : 0, 7, rdt);
+  const dt = rdt * lerp(1, 0.1, P.slow), cdt = rdt * lerp(1, cineOn ? 0.22 : 0.4, P.slow);   // world at 10%, the flyer keeps some pace
+  worldT += dt; rainT += rdt * lerp(1, 0.012, P.slow);                       // rain all but freezes
+  if (cineOn) stepCine(cdt, rdt); else stepManual(cdt, rdt);
+  const vs = cineOn ? 1 : cdt / rdt;
+  P.speed = P.vel.length();
+  if (P.boomArmed && P.speed > MACH * 0.92) { P.boomArmed = false; P.shock = 0; sonicBoom(); }
+  if (P.speed < MACH * 0.6) P.boomArmed = true;
+  P.shock = Math.min(1, P.shock + rdt / 0.9);
+  const fovT = 72 + 42 * P.boost * smooth(0.12, 0.9, P.speed / MACH) - 7 * P.slow;
+  if (Math.abs(fovT - camera.fov) > 0.02) { camera.fov = damp(camera.fov, fovT, 5, rdt); camera.updateProjectionMatrix(); }
+  camera.updateMatrixWorld();
+
+  const px = P.pos.x, pz = P.pos.z;
+  updateChunks(px, pz, started ? 4 : 400);
+  updateTraffic(dt, worldT, px, pz, P.vel.x, P.vel.z);
+  updateFx(rdt);
+
+  U.uTime.value = worldT; U.uRTime.value = realT; U.uBoost.value = P.boost; U.uSlow.value = P.slow;
+  U.uCamVel.value.copy(P.vel).multiplyScalar(vs);
+  U.uCloud.value = smooth(CLOUD_Y - 90, CLOUD_Y + 20, P.pos.y);
+  matRain.uniforms.uRainT.value = rainT; matRain.uniforms.uRainScale.value = lerp(1, 0.012, P.slow);
+  matGround.uniforms.uCenter.value.set(Math.round(px / CELL) * CELL, Math.round(pz / CELL) * CELL);
+  const cu = matComp.uniforms, sn = P.speed * vs / MACH, hf = camera.fov * Math.PI / 180;
+  cu.uTime.value = realT; cu.uBoost.value = P.boost * smooth(0.25, 0.9, sn); cu.uSpeedN.value = sn * smooth(0.05, 0.35, sn);
+  cu.uShock.value = P.shock; cu.uTrail.value = 0.55 * P.slow;
+  cu.uRot.value.set(clamp(P.yawRate * rdt * 0.5 / (hf * camera.aspect), -0.05, 0.05), clamp(-P.pitchRate * rdt * 0.5 / hf, -0.05, 0.05));
+  fu.uScan.value = fx.scan; fu.uTear.value = fx.tear; fu.uCA.value = fx.ca + 0.004 * P.boost + 0.0015 * P.slow;
+  fade = started ? Math.min(1, fade + rdt / 2.4) : 0; fu.uFade.value = fade * fade * (3 - 2 * fade);
+  renderScene();
+  updateAudio();
+}
+
+addEventListener('resize', resize);
+resize(); resetCity(); placeStart(); resetTraffic(P.pos.x, P.pos.z); refreshUI();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
