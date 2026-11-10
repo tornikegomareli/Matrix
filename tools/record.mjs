@@ -1,6 +1,6 @@
 // Frame-exact recorder: steps the page on a virtual 60 Hz clock in headless Chrome, screenshots every frame,
 // renders the page's Web Audio through an OfflineAudioContext in lockstep, and encodes both with ffmpeg.
-// usage: node record.mjs <url> <out.mp4> <seconds> [W] [H] ['<keys json: [{t,type,code}]>'] [crf] [maxrate in Mbit/s] [first picture.png]
+// usage: node tools/record.mjs <url> <out.mp4> <seconds> [W] [H] ['<keys json: [{t,type,code}]>'] [crf] [maxrate in Mbit/s] [first picture.png]
 // The first picture is a PNG of the size of the video. It is put in front of the recording for a quarter of a second, so it is the first frame.
 // A tour is recorded from its first picture: the frames before it (the wait for a key, a scene that is made ready behind black) are left out.
 import fs from 'node:fs';

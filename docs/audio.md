@@ -7,13 +7,13 @@ It only loops, filters, pans, changes the playback rate and mixes. The third fil
 
 The one generated buffer is the impulse response of the reverb. It is a filter for the recordings, not a sound.
 
-The recordings are embedded in `code-city.html` as MP3 in base64. They are listed in [assets.md](assets.md).
-The music is the one sound that is not a field recording. It is a track in its own file, `music.mp3`.
+The recordings are MP3 files in `public/sounds/`. They are listed in [assets.md](assets.md).
+The music is the one sound that is not a field recording. It is the track `public/music.mp3`.
 
 ## Start
 
 A browser allows sound only after a user action. `startAudio()` runs on the first click.
-It builds the graph and decodes the recordings with `decodeAudioData`. Each sound starts when its decoding is done.
+It builds the graph, fetches the recordings and decodes them with `decodeAudioData`. Each sound starts when its decoding is done.
 
 ## The graph
 
@@ -31,7 +31,7 @@ thunder ──> thunder lowpass ────────────────
 
 ## Music
 
-`startAudio()` fetches `music.mp3`, decodes it and plays it from its beginning. The file is beside the page, so there is music only over http.
+`startAudio()` fetches `music.mp3`, decodes it and plays it from its beginning.
 Six seconds before the track ends, the next pass starts and fades in over the end of the old one.
 A tour calls `playMusic(true)`, which cuts the track and starts it again from its beginning.
 
@@ -82,7 +82,7 @@ While the world is still being built at the start, the city and the idle wind ar
 
 ## The third film
 
-The film `?tour=loop` has recordings of its own in `tour-snd/`. It fetches them when it starts. A file that is missing is a silent one.
+The film `?tour=loop` has recordings of its own in `public/sounds/tour/`. It fetches them when it starts. A file that is missing is a silent one.
 
 | Recording | Use |
 |---|---|

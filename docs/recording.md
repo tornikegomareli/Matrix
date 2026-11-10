@@ -1,6 +1,6 @@
 # Recording a video
 
-`record.mjs` records the page to an MP4 with sound. It does not capture the screen.
+`tools/record.mjs` records the page to an MP4 with sound. It does not capture the screen.
 It steps the page one frame at a time, so the video has exactly 60 frames per second however slow the capture is.
 
 ## Requirements
@@ -8,17 +8,18 @@ It steps the page one frame at a time, so the video has exactly 60 frames per se
 - Node.js 22 or newer (it uses the built-in `WebSocket` and `fetch`)
 - Google Chrome at `/Applications/Google Chrome.app` (macOS path, set in the script)
 - `ffmpeg` on the path
-- the page served over http
+- the page served over http: the built page with `npm run preview`, or the development server
 
 ## Use
 
 ```sh
-python3 -m http.server 8931 &
-node record.mjs "http://127.0.0.1:8931/code-city.html#seed=C0DEC17E" out.mp4 26
+npm run build
+npm run preview &
+node tools/record.mjs "http://localhost:4173/#seed=C0DEC17E" out.mp4 26
 ```
 
 ```
-node record.mjs <url> <out.mp4> <seconds> [width] [height] [keys] [crf] [rate] [first]
+node tools/record.mjs <url> <out.mp4> <seconds> [width] [height] [keys] [crf] [rate] [first]
 ```
 
 | Argument | Default | Meaning |
@@ -35,13 +36,13 @@ A tour waits for a click or a key. Give the recorder a key event to start it.
 The recording begins at the first picture of the tour. The frames before it, and their sound, are left out.
 
 ```sh
-node record.mjs "http://127.0.0.1:8931/code-city.html?tour=loop#seed=C0DEC17E" loop.mp4 47 1920 1080 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]'
+node tools/record.mjs "http://localhost:4173/?tour=loop#seed=C0DEC17E" loop.mp4 47 1920 1080 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]'
 ```
 
 For 3840×2160, add `pixels=8.3` to the address. Without it the page renders 2.3 million pixels and the video is an enlargement.
 
 ```sh
-node record.mjs "http://127.0.0.1:8931/code-city.html?tour=reel&pixels=8.3#seed=C0DEC17E" reel-4k.mp4 69.9 3840 2160 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]' 15 48 first.png
+node tools/record.mjs "http://localhost:4173/?tour=reel&pixels=8.3#seed=C0DEC17E" reel-4k.mp4 69.9 3840 2160 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]' 15 48 first.png
 ```
 
 69.9 seconds is the reel less its last 0.1 second. The video therefore ends before the page shows its controls again.

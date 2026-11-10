@@ -3,15 +3,16 @@
 The world is generated, but four kinds of material come from outside: the library, the sounds, the music, and the sky data.
 The sounds and the sky data are public domain or CC0. Three.js is MIT. The music has the Pixabay licence.
 
-## Library
+## Libraries
 
-| Item | Source | Licence |
+| Item | Use | Licence |
 |---|---|---|
-| Three.js r160 | Loaded at run time from `cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js` | MIT |
+| Three.js r160 | The npm package `three`, version 0.160.0. The build puts it into the page. | MIT |
+| Vite 8 | The development server and the build tool. It is not part of the built page. | MIT |
 
 ## Sounds
 
-All sounds are recordings, embedded in `code-city.html` as MP3 in base64 (`<script type="text/plain" id="snd-…">`).
+All sounds are recordings: MP3 files in `public/sounds/`. The file of a sound is its id and `.mp3`.
 They were cut, turned into loops where needed, and encoded as mono MP3 at 32 kHz (the city bed at 16 kHz).
 
 | Id | Recording | Author, source | Licence |
@@ -29,7 +30,7 @@ They were cut, turned into loops where needed, and encoded as mono MP3 at 32 kHz
 
 ### Sounds of the third film
 
-These are files in `tour-snd/`, mono MP3. The licence of each was read from Wikimedia Commons.
+These are files in `public/sounds/tour/`, mono MP3. The licence of each was read from Wikimedia Commons.
 
 | File | Recording | Author, source | Licence |
 |---|---|---|---|
@@ -46,18 +47,18 @@ These are files in `tour-snd/`, mono MP3. The licence of each was read from Wiki
 
 | File | Track | Author, source | Licence |
 |---|---|---|---|
-| `music.mp3` | "Futuristic Suspense (Reversed Engine)" (the title is read from the file name) | AlexGrohl, pixabay.com, track 175593 | Pixabay Content License |
+| `public/music.mp3` | "Futuristic Suspense (Reversed Engine)" (the title is read from the file name) | AlexGrohl, pixabay.com, track 175593 | Pixabay Content License |
 
 The file is the download from Pixabay, encoded again as MP3 at 128 kbit/s. It is 3 minutes 57 seconds long.
 The Pixabay licence allows use without attribution. It does not allow the track to be distributed on its own, so do not offer the file as a download.
 
 ## Sky
 
-| Data | Source | Licence | Form in the file |
+| Data | Source | Licence | File in `public/sky/` |
 |---|---|---|---|
-| Stars | Yale Bright Star Catalogue, 5th revised edition (Hoffleit and Warren, 1991) | Public domain | `dataStars`: 5,021 stars, 8 bytes each, base64 |
-| Milky Way | NASA Goddard Scientific Visualization Studio, Deep Star Maps 2020 | Public domain (NASA) | `imgGalaxy`: JPEG, 1,024×272, resampled to the frame of the world |
-| Moon | NASA Scientific Visualization Studio, CGI Moon Kit (LRO colour map) | Public domain (NASA) | `imgMoon`: JPEG of the near side |
+| Stars | Yale Bright Star Catalogue, 5th revised edition (Hoffleit and Warren, 1991) | Public domain | `stars.bin`: 5,021 stars, 8 bytes each |
+| Milky Way | NASA Goddard Scientific Visualization Studio, Deep Star Maps 2020 | Public domain (NASA) | `galaxy.jpg`: 1,024×272, resampled to the frame of the world |
+| Moon | NASA Scientific Visualization Studio, CGI Moon Kit (LRO colour map) | Public domain (NASA) | `moon.jpg`: the near side |
 
 ## Generated in the page
 

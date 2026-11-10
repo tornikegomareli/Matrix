@@ -1,33 +1,41 @@
 # Architecture
 
-## One file
+## Layout
 
-`code-city.html` holds everything the world needs:
+`index.html` has the markup of the interface: statistics, the switches, a hint line, touch controls and the intro text.
+It loads `src/style.css` and `src/main.js`. Every other file in `src/` is a module that `main.js` imports, directly or through another module.
 
-1. Markup and CSS for the interface: statistics, four toggles, a hint line, touch controls and the intro text.
-2. One `<script type="module">`. It imports Three.js r160 from cdnjs. It has about 2,600 lines.
-3. Data blocks after the script, as `<script type="text/plain">` elements with base64 text: the star catalogue, two images and twelve sound files.
-
-The module runs top to bottom. Its sections are marked with comment rules, in this order:
-
-| Section | Content |
+| Module | Content |
 |---|---|
-| constants + helpers | Sizes of the world, hash functions, a seeded random generator. |
-| seed + settings | The seed from the address, and the four settings. |
-| glyph atlas | An 8×8 texture of mirrored katakana and digits, drawn on a canvas. |
-| renderer + shared uniforms | The WebGL renderer and one uniform object, `U`, that every scene shader shares. |
-| GLSL | The shaders. See [rendering.md](rendering.md). |
-| cloud noise | Two noise textures and the textures for the moon and the Milky Way. |
-| scene | Cameras and the meshes that exist once: ground, sky, stars, rain, steam, cars. |
-| procedural city | The generator. See [world.md](world.md). |
-| chunks | Streaming, level of detail, the far field, the recompile wave. |
-| traffic, trains | Cars, trains and every ribbon of light. |
-| post-processing | Render targets and the passes. |
-| player, flight | Input, manual flight, cinematic flight. See [flight.md](flight.md). |
-| audio | See [audio.md](audio.md). |
-| glitches + lightning | Timed effects. |
-| UI, intro, main loop | The frame function. |
-| scripted tours | A loader for `tour.js`. See [tours.md](tours.md). |
+| `core.js` | Sizes of the world, hash functions, a seeded random generator. |
+| `settings.js` | The seed from the address, and the switches. |
+| `state.js` | State that several modules read and write: the clocks, the flyer `P`, the keys, and the state of cinematic flight and of the world build. |
+| `glyphs.js` | An 8×8 texture of mirrored katakana and digits, drawn on a canvas. |
+| `renderer.js` | The WebGL renderer, one uniform object `U` that every scene shader shares, and `mkMat`. |
+| `shaders/` | The GLSL of each material, as strings. `shaders/common.js` is the part that all of them share. See [rendering.md](rendering.md). |
+| `materials.js` | One `ShaderMaterial` for each kind of thing that is drawn. |
+| `clouds.js` | Two noise textures, and the textures of the moon and the Milky Way. |
+| `scene.js` | Cameras and the meshes that exist once: ground, sky, stars, rain, steam, cars. |
+| `world/city.js` | The generator. See [world.md](world.md). |
+| `world/chunks.js` | Streaming, level of detail, the far field, the recompile wave, the world build. |
+| `world/traffic.js`, `world/trains.js` | Cars, trains and every ribbon of light. |
+| `pipeline.js` | Render targets, the post-processing passes, and `renderScene()`. |
+| `flight/manual.js`, `flight/cine.js` | Manual flight and cinematic flight. See [flight.md](flight.md). |
+| `audio.js` | See [audio.md](audio.md). |
+| `fx.js` | Glitches and lightning. |
+| `ui.js`, `intro.js`, `input.js` | The switches, the intro text, and keys, mouse and touch. |
+| `main.js` | The frame function. It also loads a scripted tour when the address asks for one. |
+| `tours/` | The scripted tours. See [tours.md](tours.md). |
+
+Files in `public/` are not modules. The page fetches them: the sounds, the music, the star catalogue and the images of the moon and the Milky Way.
+
+## Rules of the module graph
+
+- A module imports what it uses. No module reads a global of another one.
+- A module may read a value that another module exports, but only the owner assigns to it. Where another module must change it, the owner exports a function for that: `setSeed`, `setEpoch`, `resetRibs`, `steamChanged`.
+- State that several modules write is a property of an object in `state.js`: `clock.world`, `view.started`, `cine.on`. An imported name cannot be assigned to. A property of an imported object can.
+- `main.js` imports the modules in the order in which they must run. Some modules do work when they load: `intro.js` starts the intro, `input.js` adds the listeners.
+- `scene.js` waits for the star catalogue with a top-level `await`. The modules that use the scene wait with it.
 
 ## Shared uniforms
 
@@ -55,7 +63,7 @@ The main entries:
 
 1. Measure the frame time. Every half second, update the statistics and check the frame rate.
 2. Update bullet time. World time advances at 10% of real time while it is active.
-3. Move the camera: `stepCine` or `stepManual`.
+3. Move the camera: `cine.move` in cinematic flight (the page's `stepCine`, or the function of a tour), else `stepManual`.
 4. Stream the city: load up to four chunks, continue the far-field rebuild.
 5. Simulate traffic, the recompile wave, the world build, trains, searchlights, lightning.
 6. Write the shared uniforms.

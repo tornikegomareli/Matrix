@@ -1,33 +1,41 @@
 # Code City
 
 An endless night city in the rain, graded like the simulated world of the Matrix films. You fly through it.
-The whole world is one HTML file. It has no build step and no server code.
+The page is a small Vite project: plain JavaScript modules and Three.js. It has no server code.
 
 Everything you see is generated in the browser: the city, the clouds, the weather and the traffic.
 Every sound effect is a recording, and a music track plays under them. The stars, the moon and the Milky Way come from real data.
 
 ## Run it
 
-The page loads Three.js from a CDN, so it needs an internet connection.
+You need Node.js 20.19 or newer.
 
 ```sh
-python3 -m http.server 8931
+npm install
+npm run dev
 ```
 
-Then open one of these addresses:
+Vite prints the address of the page, by default `http://localhost:5173/`. Add one of these to it:
 
 | Address | What it plays |
 |---|---|
-| `http://127.0.0.1:8931/code-city.html` | The world. It flies by itself until you take the controls. |
-| `http://127.0.0.1:8931/code-city.html?tour=film` | A 41 second scripted film. |
-| `http://127.0.0.1:8931/code-city.html?tour=reel` | A 70 second scripted tour of the world. |
-| `http://127.0.0.1:8931/code-city.html?tour=loop` | A 45 second scripted film: one night that repeats. |
-| `http://127.0.0.1:8931/code-city.html?tour=poster` | A still scene: lightning over the skyline. The first frame of the reel video is a picture of it. |
+| `/` | The world. It flies by itself until you take the controls. |
+| `/?tour=film` | A 41 second scripted film. |
+| `/?tour=reel` | A 70 second scripted tour of the world. |
+| `/?tour=loop` | A 45 second scripted film: one night that repeats. |
+| `/?tour=poster` | A still scene: lightning over the skyline. The first frame of the reel video is a picture of it. |
 
 Add `#seed=C0DEC17E` (any eight hex digits) to get the same city again.
-You can also open `code-city.html` from disk. The tours and the music need the local server.
-
 Sound starts with the first click, because browsers block it before that.
+
+## Build
+
+```sh
+npm run build      # writes the site to dist/
+npm run preview    # serves dist/ at http://localhost:4173/
+```
+
+`dist/` is a static site. A static host can serve it from any folder.
 
 ## Controls
 
@@ -50,19 +58,23 @@ On a touch screen there is a stick, a boost button, a time button and a cinemati
 
 ## Files
 
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `code-city.html` | The world: markup, styles, one JavaScript module, all shaders, and the embedded data. |
-| `tour.js` | The three scripted tours. The page loads it only when the address has `?tour=`. |
-| `tour-snd/` | Recordings for the third tour. The tour fetches them, so they play only over http. |
-| `music.mp3` | The background music. The page fetches it, so it plays only over http. |
-| `record.mjs` | A frame-exact video recorder for the page (Node.js, Chrome, ffmpeg). |
+| `index.html` | The markup of the page. |
+| `src/` | The JavaScript modules and the styles. `src/main.js` is the entry. |
+| `src/shaders/` | The GLSL of every material, as strings in modules. |
+| `src/world/` | The city generator, chunk streaming, traffic and trains. |
+| `src/flight/` | Manual flight and cinematic flight. |
+| `src/tours/` | The scripted tours. The page loads them only when the address has `?tour=`. |
+| `public/` | Files that the page fetches: the sounds, the music, the star catalogue and two sky images. |
+| `tools/record.mjs` | A frame-exact video recorder for the page (Node.js, Chrome, ffmpeg). |
 | `code-city-1080p60.mp4` | A recording of the first version. It does not show the current look. |
 | `docs/` | How it works. |
 
 ## Technology
 
-- **Three.js r160** as an ES module, on **WebGL2**. Three.js supplies the renderer, the math and the buffers. Every material is a hand-written GLSL shader.
+- **Vite** for the development server and the build. The code is plain JavaScript modules, with no framework.
+- **Three.js r160** from npm, on **WebGL2**. Three.js supplies the renderer, the math and the buffers. Every material is a hand-written GLSL shader.
 - **Instanced rendering.** The city is boxes, cylinders and quads drawn in a few hundred draw calls.
 - **Ray-marched volumetric clouds** at half resolution, smoothed over time.
 - **An HDR pipeline:** planar reflection, bloom, motion blur, ACES tone mapping and a film grade.
@@ -73,7 +85,7 @@ On a touch screen there is a stick, a boost button, a time button and a cinemati
 
 | Document | Subject |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | The file, the frame loop and the render passes. |
+| [docs/architecture.md](docs/architecture.md) | The modules, the frame loop and the render passes. |
 | [docs/world.md](docs/world.md) | How the city is generated, streamed and changed. |
 | [docs/rendering.md](docs/rendering.md) | The shaders and the post-processing. |
 | [docs/sky-and-clouds.md](docs/sky-and-clouds.md) | Stars, moon, Milky Way, clouds and lightning. |
