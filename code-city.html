@@ -168,7 +168,7 @@ const U = {
   uCamVel: { value: new THREE.Vector3() }, uBoost: { value: 0 }, uSlow: { value: 0 },
   uAbove: { value: 0 }, uFlashPos: { value: new THREE.Vector3() },
   uNear: { value: new THREE.Vector4() }, uWave: { value: new THREE.Vector4(1, 0, 0, 0) },
-  uRainK: { value: 1 }, uNF: { value: new THREE.Vector2(0.5, 60000) }, tDepth: { value: null }, uCover: { value: null }, uNoise3: { value: null },
+  uBuild: { value: new THREE.Vector4() }, uRainK: { value: 1 }, uNF: { value: new THREE.Vector2(0.5, 60000) }, tDepth: { value: null }, uCover: { value: null }, uNoise3: { value: null },
 };
 const mkMat = (vs, fs, extra, opts) => new THREE.ShaderMaterial(Object.assign({
   uniforms: Object.assign({}, U, extra || {}), vertexShader: '#define VS\n' + GL_COMMON + vs, fragmentShader: GL_COMMON + fs,
@@ -181,6 +181,7 @@ uniform float uTime, uRTime, uMirror, uFogDen, uFogH, uFogFar, uCloud, uFlash, u
 uniform vec3 uFogCol, uFlashDir, uCamVel, uFlashPos;
 uniform vec2 uRes, uNF;
 uniform vec4 uWave;                                 // recompile front: direction x, z, position along it, active
+uniform vec4 uBuild;                                // the world being built: centre x, z, radius of the built part, active
 uniform sampler2D uGlyph, uCover, tDepth;
 uniform sampler3D uNoise3;
 const float CLOUD_Y = 620.0, CLOUD_TOP = 930.0;     // the cloud layer
@@ -207,6 +208,8 @@ vec3 skyGrad(float y){
   g = mix(g, nightSky(y), uAbove);
   return g * (1.0 + uFlash * 1.3 * (1.0 - uAbove));
 }
+// while the world is built outward from a point: how far the front has passed p, in metres. A large number when nothing is being built
+float built(vec2 p){ return uBuild.w > 0.5 ? uBuild.z - distance(p, uBuild.xy) : 1e6; }
 // the cloud layer, 0..1 without the fine erosion. The ray march, the lights and the script all read this one field.
 float cloudBase(vec3 p, float lod){
   float h = (p.y - CLOUD_Y) / (CLOUD_TOP - CLOUD_Y);
@@ -286,7 +289,7 @@ vec2 codeRain(vec2 p, float seed, float density, vec2 dpx, vec2 dpy){
 const BOX_VS = /* glsl */`
 attribute vec3 iPos; attribute vec3 iSize; attribute vec4 iPar; attribute vec3 iBld;   // iBld = building centre x, z + wave flag
 uniform vec4 uGlitchA, uGlitchB, uNear;
-varying vec3 vWP; varying vec3 vL; varying vec3 vN; varying vec3 vSize; varying vec4 vPar; varying float vG; varying float vWv;
+varying vec3 vWP; varying vec3 vL; varying vec3 vN; varying vec3 vSize; varying vec4 vPar; varying float vG; varying float vWv; varying float vBd;
 void main(){
   vec3 lp = position * iSize;
   vec3 wp = lp + iPos;
@@ -306,7 +309,10 @@ void main(){
     wv = 1.0 - smoothstep(0.0, 150.0, a);
     g = max(g, (1.0 - smoothstep(10.0, 75.0, a)) * 0.8);
   }
-  vWv = wv;
+  float bd = built(iBld.x > 1e6 ? iPos.xz : iBld.xy);                         // the world is being built: nothing stands beyond the front,
+  if (bd < 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }           // and behind it every building grows out of the ground
+  if (bd < 1e5) { float r = smoothstep(0.0, 90.0, bd); wp.y *= r; lp.y *= r; }
+  vWv = wv; vBd = bd;
   if (g > 0.0) {
     float band = floor(wp.y * 0.12 + uRTime * 14.0);
     wp.x += (h11(band + iPar.x * 31.0) - 0.5) * 3.0 * g * step(0.6, h11(band * 1.7));
@@ -317,12 +323,22 @@ void main(){
 }`;
 
 const BOX_FS = /* glsl */`
-varying vec3 vWP; varying vec3 vL; varying vec3 vN; varying vec3 vSize; varying vec4 vPar; varying float vG; varying float vWv;
+varying vec3 vWP; varying vec3 vL; varying vec3 vN; varying vec3 vSize; varying vec4 vPar; varying float vG; varying float vWv; varying float vBd;
 void main(){
   bool front = gl_FrontFacing; if (uMirror < 0.0) front = !front;
-  if (!front && vG < 0.004) discard;
+  bool frame = vBd < 110.0 + 80.0 * h11(vPar.x * 3.3);            // the world is being built and this building is still a bare frame
+  if (!front && vG < 0.004 && !frame) discard;
   vec3 n = normalize(vN);
   vec3 toCam = cameraPosition - vWP; float dist = length(toCam); vec3 V = toCam / dist;
+  if (frame) {                                                   // edges and floor lines only; it snaps to solid a moment later
+    vec2 e2 = vSize.xz * 0.5 - abs(vL.xz);
+    float ed = abs(n.y) > 0.5 ? min(e2.x, e2.y) : (abs(n.x) > 0.5 ? e2.y : e2.x);
+    float wire = 1.0 - smoothstep(0.0, 0.14 + min(dist, 900.0) * 0.0024, ed);
+    float fl = (1.0 - smoothstep(0.0, 0.05 + dist * 0.0014, abs(fract(vWP.y / 9.0) - 0.5) * 9.0)) * (1.0 - smoothstep(250.0, 900.0, dist)) * step(abs(n.y), 0.5);
+    float a = max(wire, fl * 0.45);
+    if (a < 0.05) discard;
+    gl_FragColor = vec4(applyFog(C_CODE * a * 1.7, vWP), 1.0); return;
+  }
   float seed = vPar.x, style = vPar.y, codeAmt = vPar.z, kind = vPar.w;
   float H = vSize.y;
   bool roof = n.y > 0.5, xface = abs(n.x) > 0.5;
@@ -422,7 +438,7 @@ void main(){
     wall *= (0.55 + 0.6 * vn(vec2(u * 0.13, v * 0.045) + seed * 50.0)) * (0.8 + 0.25 * vn(vec2(u * 1.7 + seed * 9.0, v * 0.05)))
           * mix(vec3(1.10, 1.0, 0.88), vec3(0.90, 0.97, 1.10), h11(seed * 7.9));                    // warm stone to cold concrete
     float r1 = h21(id + fseed * 71.3), r2 = h21(vec2(floor(id.x / 3.0), id.y) + fseed * 13.1), r3 = h21(id * 1.7 + fseed * 3.3);
-    float lit = min(1.0, step(r1, pLit * 0.55) + step(r2, pLit * 0.6) * step(r1, 0.75));
+    float lit = min(1.0, step(r1, pLit * 0.55) + step(r2, pLit * 0.6) * step(r1, 0.75)) * step(240.0 + 170.0 * r3, vBd);   // in a new building the windows come on one by one
     float wb = mix(0.35, 1.5, r3); wb *= wb;
     wb *= mix(1.0, 0.5, pod) * (0.72 + 0.28 * step(0.5, fract(f.y * 5.0 + r3 * 9.0) + 0.5 * step(r1, 0.5)))
         * mix(1.0, 0.75 + 0.25 * step(0.1, fract(f.x * 3.0)), pod);
@@ -468,13 +484,13 @@ void main(){
       sh *= 1.0 - 0.5 * hp.z;
       glow = mix(win * lit * wb * sh * 1.35 * (1.0 - 0.75 * bar), glow, clamp(smoothstep(0.3, 0.55, lod) + smoothstep(170.0, 240.0, dist), 0.0, 1.0));
     }
-    emis += wc * 0.62 * mix(glow, pLit * 0.55, lod);
+    emis += wc * 0.62 * mix(glow, pLit * 0.55 * smoothstep(240.0, 410.0, vBd), lod);
     float crown = max(0.9, dist * 0.0022);
-    if (pod < 0.5 && v > H - crown && h11(seed * 3.7) > 0.5) {                                                    // crown line
+    if (pod < 0.5 && v > H - crown && h11(seed * 3.7) > 0.5 && vBd > 230.0) {                                                    // crown line
       float hc = h11(seed * 11.3);
       emis += (hc < 0.40 ? vec3(0.92, 0.95, 1.0) : hc < 0.60 ? vec3(0.15, 0.72, 1.0) : hc < 0.75 ? vec3(1.0, 0.20, 0.28) : hc < 0.88 ? vec3(1.0, 0.58, 0.14) : C_CODE * 1.6) * 1.6 * (0.9 / crown);
     }
-    if (dist < 1000.0) {
+    if (dist < 1000.0 && vBd > 200.0) {
       vec2 cr = codeRain(p, fseed, max(codeAmt * uCode, vWv * 0.95), dpx, dpy);
       emis += (vec3(0.16, 1.0, 0.36) * cr.x * 1.5 + vec3(0.75, 1.0, 0.85) * cr.y * 1.4)
             * (1.0 - smoothstep(700.0, 1000.0, dist)) * (1.0 - 0.65 * win * lit) * (1.0 + 2.0 * vWv);
@@ -509,6 +525,7 @@ varying vec3 vWP; varying vec3 vN; varying vec4 vPar; varying float vG; varying 
 void main(){
   float t = position.y, r = mix(1.0, iPar.y, t);
   vec3 wp = vec3(position.x * iSize.x * r, t * iSize.y, position.z * iSize.z * r) + iPos;
+  if (built(iBld.xy) < 200.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 da = iBld.xy - uGlitchA.xy, db = iBld.xy - uGlitchB.xy;
   float g = 0.0;
   if (dot(da, da) < 1.0) g = uGlitchA.z;
@@ -606,7 +623,8 @@ void main(){
   float pool = 0.0;
   if (ax < 20.0) pool += lampPool(vec2(q.x, p.y), 1.0, 12.5) + lampPool(vec2(q.x, p.y), -1.0, 37.5);
   if (az < 20.0) pool += lampPool(vec2(q.y, p.x), 1.0, 12.5) + lampPool(vec2(q.y, p.x), -1.0, 37.5);
-  pool = mix(pool, 0.06, lodG);
+  float bl = smoothstep(0.0, 200.0, built(p));                  // 0 where the world is not built yet
+  pool = mix(pool, 0.06, lodG) * bl;
   vec3 lamp = C_LAMP;
   vec3 light = uFogCol * 3.2 + C_GLOW * 0.03 + lamp * pool * 0.62 + C_FLASH * uFlash * (0.2 + 0.8 * uFlashDir.y);
 
@@ -633,7 +651,12 @@ void main(){
   }
   vec3 outc = col * light * (1.0 - 0.5 * pud) + refl * F;
   outc += lamp * pool * 0.25 * gloss * dot(nrm, nrm) * 10.0;     // ripple glints under the lamps
-  outc += extra + lamp * (exp(-dRoad * 0.1) * (1.0 - lodG) + 0.3 * lodG) * mix(0.06, 0.32, smoothstep(700.0, 1900.0, dist)) * smoothstep(250.0, 1100.0, dist);   // from far above the wet streets read as ribbons of light
+  outc += extra * bl + lamp * (exp(-dRoad * 0.1) * (1.0 - lodG) + 0.3 * lodG) * mix(0.06, 0.32, smoothstep(700.0, 1900.0, dist)) * smoothstep(250.0, 1100.0, dist) * bl;   // from far above the wet streets read as ribbons of light
+  if (bl < 1.0) {                                                // the world is being built: bare ground carries a measuring grid, and the front is a line of light
+    vec2 g10 = abs(fract(p / 10.0) - 0.5);
+    float l10 = (1.0 - smoothstep(0.0, 0.07 + fwp * 1.2, (0.5 - max(g10.x, g10.y)) * 10.0)) * (1.0 - smoothstep(1.5, 6.0, fwp));
+    outc = mix(C_CODE * (l10 * 0.45 + 0.008), outc, bl) + C_CODE * exp(-abs(built(p)) * 0.15) * 1.6;
+  }
   if (uWave.w > 0.5) {                                           // the recompile front runs over the ground as a line of light
     float dF = dot(p, uWave.xy) - uWave.z;
     outc += vec3(0.35, 1.0, 0.55) * (exp(-abs(dF) * 0.22) * 2.2 + (dF < 0.0 ? exp(dF / 80.0) * 0.25 * step(0.5, fract(p.x * 0.5) + fract(p.y * 0.5)) : 0.0));
@@ -709,6 +732,7 @@ attribute vec3 iPos; attribute vec4 iL; attribute vec3 iB;        // iL = type, 
 varying vec2 vUv; varying vec3 vCol;
 void main(){
   vec3 c; float it; vec3 lp = iPos;
+  if (built(iB.x > 1e6 ? iPos.xz : iB.xy) < 220.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   if (uWave.w > 0.5 && iB.z != 0.0) {
     float dF = dot(iB.xy, uWave.xy) - uWave.z;
     if (dF * iB.z > 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
@@ -854,6 +878,7 @@ vec2 carFwd(float d){ return d < 0.5 ? vec2(1.0, 0.0) : d < 1.5 ? vec2(-1.0, 0.0
 const CAR_VS = CAR_COMMON + /* glsl */`
 varying vec3 vWP; varying vec3 vN; varying float vSeed; varying float vLY;
 void main(){
+  if (built(iCar.xy) < 260.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 fw = carFwd(iCar.z), rt = vec2(-fw.y, fw.x);
   vec3 wp = vec3(iCar.x + fw.x * position.z + rt.x * position.x, position.y, iCar.y + fw.y * position.z + rt.y * position.x);
   vN = vec3(fw.x * normal.z + rt.x * normal.x, normal.y, fw.y * normal.z + rt.y * normal.x);
@@ -875,6 +900,7 @@ const CARL_VS = CAR_COMMON + /* glsl */`
 attribute float aPart;          // 0,1 headlights  2,3 taillights  4 beam on the road  5 tail glow on the road
 varying vec2 vUv; varying vec3 vCol; varying float vKind;
 void main(){
+  if (built(iCar.xy) < 260.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 fw = carFwd(iCar.z), rt = vec2(-fw.y, fw.x);
   vec3 F = vec3(fw.x, 0.0, fw.y), R = vec3(rt.x, 0.0, rt.y), base = vec3(iCar.x, 0.0, iCar.y);
   float head = (aPart < 1.5 || (aPart > 3.5 && aPart < 4.5)) ? 1.0 : 0.0;
@@ -1190,7 +1216,7 @@ function farRows(ix, iz, e, out) {
 
 // Step 2 of a cell: full detail. Every value comes from the seed, the cell and the epoch.
 // boxes/props/poles rows: x, y0, z, w, h, d, seed, style, code, kind, buildingX, buildingZ
-// kinds: 0 body, 1 podium, 2 roof prop, 3 pole, 4 train car, 5 viaduct, 6 blade sign, 7 roof screen, 8 floating block
+// kinds: 0 body, 1 podium, 2 roof prop, 3 pole, 4 train car, 5 viaduct, 6 blade sign, 7 roof screen
 function genCell(ix, iz, e) {
   const L = cellLots(ix, iz, e);
   const rnd = mulberry32(hashInt(SEED ^ Math.imul(e, 0x2545F491), ix, iz)), R = (a, b) => a + (b - a) * rnd();
@@ -1467,6 +1493,14 @@ function resetCity() {
 
 // Recompile wave. prep: every chunk and the far field are rebuilt with both epochs. run: the front crosses the city.
 // post: the epoch moves forward and everything is rebuilt with the new one only.
+// the world builds itself outward from a point: frames rise, snap to solid, then their lights come on
+const build = { on: false, r: 0, speed: 0, auto: false };
+function startBuild(x, z, speed) { build.on = true; build.r = 0; build.speed = speed; U.uBuild.value.set(x, z, 0, 1); }
+function updateBuild(dt) {
+  if (!build.on) return;
+  build.r += build.speed * dt; U.uBuild.value.z = build.r;
+  if (build.r > 7000) { build.on = false; U.uBuild.value.w = 0; }
+}
 function startWave() {
   if (wave.phase || !started) return;
   const fwd = camera.getWorldDirection(_t); let dx = -fwd.x, dz = -fwd.z; const l = Math.hypot(dx, dz);
@@ -2278,15 +2312,15 @@ function startAudio() {
 function updateAudio(rdt) {
   if (!AC) return;
   const N = AU.nodes, alt = P.pos.y, sn = clamp(P.speed / MACH, 0, 1.6), below = 1 - U.uAbove.value, inC = U.uCloud.value, rainOn = S.rain ? 1 : 0, rainK = U.uRainK.value;
-  const street = 1 - smooth(5, 70, alt);
+  const street = 1 - smooth(5, 70, alt), world = build.on ? smooth(300, 1500, build.r) : 1;     // no city yet, no city sound
   const gust = 0.85 + 0.15 * Math.sin(realT * 0.31) * Math.sin(realT * 0.173 + 1);
   aSet(N.rain.gain, rainOn * rainK * 1.5 * (1 - 0.5 * inC) * gust);
   aSet(N.rainLP.frequency, lerp(11000, 4500, smooth(60, 600, alt)), 0.3);                       // high above the street the rain is a duller wash
   aSet(N.close.gain, rainOn * rainK * lerp(0.1, 1.1, street) * (1 - inC) * gust);
-  aSet(N.wind.gain, 0.05 + 2.2 * Math.pow(Math.min(sn, 1.2), 1.5) + 1.0 * inC * Math.min(1, sn * 3), 0.15);
+  aSet(N.wind.gain, 0.05 * world + 2.2 * Math.pow(Math.min(sn, 1.2), 1.5) + 1.0 * inC * Math.min(1, sn * 3), 0.15);
   if (N.windSrc) aSet(N.windSrc.playbackRate, 0.75 + 0.85 * sn, 0.15);
   aSet(N.hi.gain, U.uAbove.value * (0.6 + 1.2 * Math.min(sn, 1.2)), 0.4);
-  aSet(N.city.gain, (S.traffic ? 1 : 0.4) * below * 1.3 * (1 - smooth(30, 520, alt)));
+  aSet(N.city.gain, (S.traffic ? 1 : 0.4) * below * 1.3 * (1 - smooth(30, 520, alt)) * world);
   aSet(lpMaster.frequency, lerp(18000, 420, P.slow), 0.08);                                     // bullet-time: the world goes underwater
   aSet(thBus.frequency, Math.min(lerp(16000, 320, U.uAbove.value), lerp(16000, 420, P.slow)), 0.3);   // thunder from above the clouds is a dull thud
   const tk = clamp(1 - nearTrain / 260, 0, 1);
@@ -2460,7 +2494,7 @@ function placeStart() {
 function newSeed() {
   SEED = (Math.random() * 4294967296) >>> 0;
   try { history.replaceState(null, '', '#seed=' + seedHex()); } catch (e) { /* file:// in some browsers */ }
-  resetCity(); placeStart(); resetTraffic(P.pos.x, P.pos.z);
+  resetCity(); placeStart(); resetTraffic(P.pos.x, P.pos.z); startBuild(P.pos.x, P.pos.z, 420);
   fx.slots[0] = fx.slots[1] = null; fx.scan = 1; fx.tear = 1; fx.ca = 0.008; chirp(6);
   if (cineOn) { cine.pan = 0; startCine(); }
 }
@@ -2474,6 +2508,7 @@ let started = false, fade = 0;
   await wait(1300);
   $('intro').classList.add('gone');
   started = true; fx.nextGlitch = 2.8; fx.force = 'dissolve';
+  setTimeout(() => { if (build.auto) { build.auto = false; build.speed = 420; } }, 700);   // the city builds itself as the picture fades in
   if (!MOVE_KEYS.some(k => keys[k])) setCine(true, true);        // already flying by hand: leave the controls alone
   setTimeout(() => $('hint').classList.add('fade'), 5000);
 })();
@@ -2524,10 +2559,10 @@ function frame(now) {
   updateChunks(px, pz, started ? 4 : 400);
   updateFar(px, pz);
   updateTraffic(dt, worldT, px, pz, P.vel.x, P.vel.z);
-  updateWave(dt);
+  updateWave(dt); updateBuild(dt);
   ribN = 0;
-  updateTrains(worldT, px, P.pos.y, pz);
-  updateBeams(worldT, px, pz);
+  if (build.on && build.r < 2500) { trainGeo.instanceCount = 0; nearTrain = 1e9; }           // trains and beams wait until the city stands
+  else { updateTrains(worldT, px, P.pos.y, pz); updateBeams(worldT, px, pz); }
   updateFx(rdt);
   ribGeo.instanceCount = ribN;
   for (const k in ribGeo.attributes) if (ribGeo.attributes[k].isInstancedBufferAttribute) ribGeo.attributes[k].needsUpdate = true;
@@ -2537,7 +2572,7 @@ function frame(now) {
   const alt = P.pos.y;
   U.uCloud.value = damp(U.uCloud.value, cloudAt(P.pos.x, alt, P.pos.z), 5, rdt);          // how deep in cloud the camera is
   U.uAbove.value = smooth(CLOUD_Y + 60, CLOUD_TOP - 40, alt);
-  U.uRainK.value = 1 - smooth(CLOUD_Y - 70, CLOUD_Y + 20, alt);                         // rain falls from the cloud base
+  U.uRainK.value = (1 - smooth(CLOUD_Y - 70, CLOUD_Y + 20, alt)) * (build.on ? smooth(500, 1500, build.r) : 1);   // rain falls from the cloud base, once there is a city to fall on
   U.uFogFar.value = lerp(FOG_FAR, 3900, smooth(140, 900, alt)); U.uFogDen.value = lerp(0.0009, 0.00013, smooth(100, 1100, alt));
   const near = lerp(0.5, 10, smooth(800, 1600, alt));
   if (Math.abs(near - camera.near) > 0.01) { camera.near = near; camera.updateProjectionMatrix(); }
@@ -2556,6 +2591,7 @@ function frame(now) {
 
 addEventListener('resize', resize);
 resize(); resetCity(); placeStart(); resetTraffic(P.pos.x, P.pos.z); refreshUI();
+startBuild(P.pos.x, P.pos.z, 0); build.auto = true;               // nothing stands until the intro ends
 requestAnimationFrame(frame);
 </script>
 <!-- the near side of the moon, JPEG in base64. Public domain: NASA SVS CGI Moon Kit (LRO colour map) -->
