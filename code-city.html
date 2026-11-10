@@ -1617,8 +1617,8 @@ function updateTrains(time, px, py, pz) {
   trainGeo.instanceCount = writeRows(trainGeo, rows, 0, TRAIN_CAP, 0);
   for (const k in trainGeo.attributes) if (trainGeo.attributes[k].isInstancedBufferAttribute) trainGeo.attributes[k].needsUpdate = true;
 }
-// searchlights on tall roofs sweep the cloud base; every spire sends one beam straight up
-function updateBeams(time, px, pz) {
+// searchlights on tall roofs sweep the cloud base
+function updateBeams(time) {
   for (const ch of chunks.values()) {
     if (ch.dist > 1300) continue;
     for (const c of ch.cells) for (const sp of c.spots) {
@@ -1626,12 +1626,6 @@ function updateBeams(time, px, pz) {
       const len = (CLOUD_Y - sp[1]) / Math.cos(tilt) + 40, st = Math.sin(tilt) * len;
       rib(sp[0], sp[1], sp[2], sp[0] + Math.cos(yaw) * st, sp[1] + Math.cos(tilt) * len, sp[2] + Math.sin(yaw) * st, 1.2, 22, 0.3, 0);
     }
-  }
-  const rx = Math.floor(px / CELL / SPIRE_GRID), rz = Math.floor(pz / CELL / SPIRE_GRID);
-  for (let a = -3; a <= 3; a++) for (let b = -3; b <= 3; b++) {
-    const sp = spireOf(rx + a, rz + b); if (!sp) continue;
-    const top = cellLots(sp.ix, sp.iz, cellEpoch(sp.ix, sp.iz)).lots[0].h, x = (sp.ix + 0.5) * CELL, z = (sp.iz + 0.5) * CELL;
-    rib(x, top, z, x, top + 2600, z, 3.5, 30, 1.0, 0);
   }
 }
 
@@ -2512,7 +2506,7 @@ function frame(now) {
   updateWave(dt); updateBuild(dt);
   ribN = 0;
   if (build.on && build.r < 2500) { trainGeo.instanceCount = 0; nearTrain = 1e9; }           // trains and beams wait until the city stands
-  else { updateTrains(worldT, px, P.pos.y, pz); updateBeams(worldT, px, pz); }
+  else { updateTrains(worldT, px, P.pos.y, pz); updateBeams(worldT); }
   updateFx(rdt);
   ribGeo.instanceCount = ribN;
   for (const k in ribGeo.attributes) if (ribGeo.attributes[k].isInstancedBufferAttribute) ribGeo.attributes[k].needsUpdate = true;
