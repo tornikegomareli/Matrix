@@ -1,0 +1,31 @@
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#39ff7a;
+    font:12px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,"Courier New",monospace;
+    -webkit-user-select:none;user-select:none;touch-action:none;letter-spacing:.06em}
+  canvas#gl{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+  #ui{position:fixed;inset:0;pointer-events:none;transition:opacity .35s;text-shadow:0 0 7px rgba(57,255,122,.6)}
+  #ui.hidden{opacity:0}
+  #ui.hidden *{pointer-events:none!important}
+  #stats{position:absolute;left:14px;top:12px;white-space:pre}
+  #toggles{position:absolute;right:14px;top:12px;display:flex;flex-direction:column;gap:4px;align-items:flex-end}
+  #toggles button,#tbtns button{pointer-events:auto;background:rgba(0,14,5,.5);border:1px solid rgba(57,255,122,.35);
+    color:inherit;font:inherit;letter-spacing:inherit;text-shadow:inherit;padding:3px 9px;cursor:pointer;border-radius:0}
+  #toggles button:hover{background:rgba(57,255,122,.16)}
+  #hint{position:absolute;left:0;right:0;bottom:18px;text-align:center;padding:0 16px;opacity:.92;transition:opacity 1.6s}
+  #hint.fade{opacity:0}
+  #intro{position:fixed;inset:0;background:#000;display:flex;align-items:center;justify-content:center;
+    font-size:clamp(26px,5vw,84px);transition:opacity 1.9s ease;z-index:5;text-shadow:0 0 12px rgba(57,255,122,.8)}
+  #intro.gone{opacity:0;pointer-events:none}
+  #introbox{width:15ch;white-space:pre}
+  #cursor{display:inline-block;width:.6em;height:1.05em;background:#39ff7a;margin-left:.1em;vertical-align:-.16em;
+    animation:blink .9s steps(1) infinite;box-shadow:0 0 12px #39ff7a}
+  @keyframes blink{50%{opacity:0}}
+  #touch{display:none}
+  .touch #touch{display:block}
+  .touch #hint{bottom:auto;top:12px;left:150px;right:170px}
+  #stick{position:fixed;left:26px;bottom:26px;width:120px;height:120px;border:1px solid rgba(57,255,122,.35);
+    border-radius:50%;pointer-events:auto;background:rgba(0,20,6,.25)}
+  #knob{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px;border-radius:50%;
+    background:rgba(57,255,122,.3);border:1px solid rgba(57,255,122,.6)}
+  #tbtns{position:fixed;right:20px;bottom:30px;display:flex;flex-direction:column;gap:10px}
+  #tbtns button{width:78px;height:44px}
+  #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:9;background:#000;padding:24px;text-align:center}

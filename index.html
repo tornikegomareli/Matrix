@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>CODE CITY</title>
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="ui">
+  <div id="stats"></div>
+  <div id="toggles">
+    <button id="tRain"></button>
+    <button id="tTraffic"></button>
+    <button id="tGlitch"></button>
+    <button id="tCode"></button>
+    <button id="tSound"></button>
+    <button id="tMusic"></button>
+  </div>
+  <div id="hint">WASD move &middot; MOUSE look (click) &middot; SPACE launch &middot; SHIFT boost &middot; Q/E down/up &middot; F bullet-time &middot; G recompile &middot; C cinematic &middot; R new seed &middot; H hide UI</div>
+  <div id="touch">
+    <div id="stick"><div id="knob"></div></div>
+    <div id="tbtns"><button id="bBoost">BOOST</button><button id="bTime">TIME</button><button id="bCine">CINE</button></div>
+  </div>
+</div>
+<div id="intro"><div id="introbox"><span id="typed"></span><span id="cursor"></span></div></div>
+<div id="err">This needs WebGL2. Try a current Chrome, Edge, Firefox or Safari.</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
