@@ -1,20 +1,20 @@
-<h1 align="center">Matrix Vibe</h1>
+<h1 align="center">Follow the white Rabbit</h1>
 
-<h3 align="center">An endless night city in the rain. You fly through it.</h3>
+<h3 align="center">An endless night in the Matrix</h3>
 
 <p align="center">
   <img src=".github/assets/skyline.jpg" width="100%" alt="Lightning strikes a spire over a night city of lit windows, in heavy rain" />
 </p>
 
-Matrix Vibe is a 3D world that runs in the browser. The city, the clouds, the weather and the traffic are generated while you fly. Every sound is a recording, and the stars are the real sky.
+Matrix Vibe is a 3D world that runs in the browser. It generates the city, the clouds, the weather, and the traffic as you fly through a nightscape inspired by the 90s film <a href="https://en.wikipedia.org/wiki/The_Matrix">The Matrix</a>. Everything shares that same distinctive vibe and color palette.
 
-**[Fly it now](https://matrix-vibe.whoopscope.workers.dev)**
+<strong><a href="https://matrix-vibe.whoopscope.workers.dev">Fly it now</a></strong>
 
-## Written by a model
+## Experiment
 
-This project is an experiment. It exists to test and measure one AI model: Claude Fable 5.2, in Claude Code. A person gave directions in plain language. The model wrote the code, the shaders, the films and the documents, and it checked its own pictures frame by frame.
+This project is an experiment to test and evaluate Claude’s Fable 5.2 model. You can read more here: <a href="https://www.anthropic.com/claude-fable-and-mythos-5-2">Claude Fable 5.2</a>.
 
-[How it was written, and what went wrong](docs/experiment.md)
+[How it was written](docs/experiment.md)
 
 <p align="center">
   <img src=".github/assets/clouds.jpg" width="100%" alt="The grid of the city seen from far above, through a gap in the clouds, with lightning inside one cloud" />
@@ -22,7 +22,7 @@ This project is an experiment. It exists to test and measure one AI model: Claud
 
 ## Three films inside
 
-Each film is a scripted camera path with timed events. It plays live, in the same world: [the film](https://matrix-vibe.whoopscope.workers.dev/?tour=film), [the reel](https://matrix-vibe.whoopscope.workers.dev/?tour=reel) and [one night that repeats](https://matrix-vibe.whoopscope.workers.dev/?tour=loop). A click starts it.
+Each “film” is a scripted camera path with timed events, all playing live in the same world: [the film](https://matrix-vibe.whoopscope.workers.dev/?tour=film), [the reel](https://matrix-vibe.whoopscope.workers.dev/?tour=reel), and [one night that repeats](https://matrix-vibe.whoopscope.workers.dev/?tour=loop). Click to start any of them.
 
 <p align="center">
   <img src=".github/assets/glass.jpg" width="100%" alt="A glass footbridge over an avenue. Its broken panes fly back into place while time runs backwards" />
@@ -30,11 +30,11 @@ Each film is a scripted camera path with timed events. It plays live, in the sam
 
 ## Fly
 
-- `W` `A` `S` `D` and the mouse fly. `Shift` boosts, and `Space` launches upward.
-- `F` slows time. `G` recompiles the city. `R` makes a new city.
-- `C` gives the controls back to the cinematic flight.
+- `W` `A` `S` `D` and the mouse to fly. `Shift` boosts, and `Space` launches upward.
+- `F` slows time. `G` recompiles the city. `R` generates a new city.
+- `C` returns control to the cinematic flight.
 
-All keys are in [docs/flight.md](docs/flight.md).
+All keys are listed in [docs/flight.md](docs/flight.md).
 
 ## Run it
 
@@ -43,7 +43,7 @@ npm install
 npm run dev
 ```
 
-`npm run build` writes a static site to `dist/`, and `npm run deploy` puts it on Cloudflare.
+`npm run build` writes a static site to `dist/`, and `npm run deploy` publishes it on Cloudflare.  
 The code is plain JavaScript modules with Vite and Three.js. It has no server code, and it needs a browser with WebGL2.
 
 ## Documents
