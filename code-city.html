@@ -909,9 +909,9 @@ void main(){
 
 // ───────────────────────── traffic: car bodies + headlights, taillights, beams on the road ─────────────────────────
 const CAR_COMMON = /* glsl */`
-attribute vec4 iCar;            // x, z, heading index (0 +x, 1 -x, 2 +z, 3 -z), seed
+attribute vec4 iCar;            // x, z, heading index (0 +x, 1 -x, 2 +z, 3 -z; or 8 + an angle), seed
 attribute float iCarS;          // brake amount
-vec2 carFwd(float d){ return d < 0.5 ? vec2(1.0, 0.0) : d < 1.5 ? vec2(-1.0, 0.0) : d < 2.5 ? vec2(0.0, 1.0) : vec2(0.0, -1.0); }
+vec2 carFwd(float d){ return d > 7.5 ? vec2(cos(d - 8.0), sin(d - 8.0)) : d < 0.5 ? vec2(1.0, 0.0) : d < 1.5 ? vec2(-1.0, 0.0) : d < 2.5 ? vec2(0.0, 1.0) : vec2(0.0, -1.0); }   // 8 + an angle: any heading
 `;
 const CAR_VS = FOLD_V + CAR_COMMON + /* glsl */`
 varying vec3 vWP; varying vec3 vN; varying float vSeed; varying float vLY;
@@ -1191,8 +1191,8 @@ const geoCarL = (() => {
   g.setIndex(idx);
   return g;
 })();
-const N_CARS = IS_TOUCH ? 140 : 280;
-const carGeo = instGeo(geoCar, N_CARS, [['iCar', 4], ['iCarS', 1]]);
+const N_CARS = IS_TOUCH ? 140 : 280, CAR_EXTRA = 8;
+const carGeo = instGeo(geoCar, N_CARS + CAR_EXTRA, [['iCar', 4], ['iCarS', 1]]);
 const carLGeo = instGeo(geoCarL, N_CARS, []);
 carLGeo.setAttribute('iCar', carGeo.attributes.iCar); carLGeo.setAttribute('iCarS', carGeo.attributes.iCarS);
 const carMesh = addMesh(carGeo, matCar), carLMesh = addMesh(carLGeo, matCarL, 12);
@@ -1638,7 +1638,7 @@ function collide(pos, vel, r) {
 
 // ───────────────────────── traffic: cars follow lanes, keep gaps, stop at red signals ─────────────────────────
 const CAR_RANGE = 440, STOP_AT = 20.3;       // stop line + half a car, measured from the intersection centre
-const cars = [];
+const cars = [], extraCars = [];                  // extraCars: up to CAR_EXTRA scripted cars { x, z, a: heading angle, seed, brake }, drawn with the traffic
 let trafficRnd = mulberry32(SEED ^ 0xCA75);
 function spawnCar(c, px, pz, vx, vz, initial) {
   const r = trafficRnd;
@@ -1694,8 +1694,10 @@ function updateTraffic(dt, time, px, pz, vx, vz) {
     A[i * 4] = c.x; A[i * 4 + 1] = c.z;
     A[i * 4 + 3] = c.seed; Bk[i] = c.brake;
   }
+  let n = cars.length;
+  for (const c of extraCars) { A[n * 4] = c.x; A[n * 4 + 1] = c.z; A[n * 4 + 2] = 8 + c.a; A[n * 4 + 3] = c.seed; Bk[n++] = c.brake || 0; }
   carGeo.attributes.iCar.needsUpdate = true; carGeo.attributes.iCarS.needsUpdate = true;
-  carGeo.instanceCount = carLGeo.instanceCount = cars.length;
+  carGeo.instanceCount = carLGeo.instanceCount = n;
 }
 
 // ───────────────────────── trains on the elevated rail, and every ribbon of light ─────────────────────────
