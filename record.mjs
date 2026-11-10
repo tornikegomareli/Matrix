@@ -1,6 +1,7 @@
 // Frame-exact recorder: steps the page on a virtual 60 Hz clock in headless Chrome, screenshots every frame,
 // renders the page's Web Audio through an OfflineAudioContext in lockstep, and encodes both with ffmpeg.
 // usage: node record.mjs <url> <out.mp4> <seconds> [W] [H] ['<keys json: [{t,type,code}]>'] [crf] [maxrate in Mbit/s]
+// A tour is recorded from its first picture: the frames before it (the wait for a key, a scene that is made ready behind black) are left out.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -15,7 +16,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const SHIM = `(() => {
   const FPS = 60, N = ${N}, SR = 48000;
-  let frame = 0, vt = 0, tid = 0, rafQ = [];
+  let frame = 0, vt = 0, tid = 0, rafQ = [], lead = 0;          // lead: frames that ran before the recording began
   const realRAF = window.requestAnimationFrame.bind(window), timers = new Map();
   window.requestAnimationFrame = fn => { rafQ.push(fn); return rafQ.length; };
   window.setTimeout = (fn, ms = 0, ...a) => { timers.set(++tid, { t: vt + ms, fn, a }); return tid; };
@@ -23,7 +24,7 @@ const SHIM = `(() => {
   performance.now = () => vt;
   let s = 0x9E3779B9;
   Math.random = () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-  const off = new OfflineAudioContext(2, Math.round(N / FPS * SR), SR);
+  const off = new OfflineAudioContext(2, Math.round((N / FPS + 45) * SR), SR);   // room for the frames before the recording
   window.AudioContext = function () { return off; };
   const resume = off.resume.bind(off); off.resume = () => Promise.resolve();   // only the recorder runs this clock: a page that resumes its audio would let it run ahead
   let aStarted = false, aDone = null;
@@ -35,6 +36,8 @@ const SHIM = `(() => {
     }
   };
   window.__ready = () => rafQ.length > 0;
+  window.__live = () => !/[?&]tour=/.test(location.search) || !!(window.__tour && __tour.go && __tour.t >= 0 && __tour.n >= 4);   // a tour shows its first picture
+  window.__lead = n => { lead = n; };
   window.__step = async events => {
     await new Promise(r => realRAF(r));
     if (frame === 0) document.getElementById('gl').click();
@@ -53,9 +56,9 @@ const SHIM = `(() => {
     return document.getElementById('stats').textContent.replace(/\\n/g, ' | ');
   };
   window.__audio = async () => {                                  // render audio up to the start of the next frame
-    if (frame >= N) {
+    if (frame >= N + lead) {
       if (!aStarted) aDone = off.startRendering(); else resume();
-      const buf = await aDone, n = buf.length, L = buf.getChannelData(0), R = buf.getChannelData(1);
+      const buf = await aDone, a0 = Math.round(lead / FPS * SR), n = Math.round(N / FPS * SR), L = buf.getChannelData(0).subarray(a0, a0 + n), R = buf.getChannelData(1).subarray(a0, a0 + n);
       const pcm = new Int16Array(n * 2); let peak = 0;
       for (let i = 0; i < n; i++) {
         peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
@@ -121,10 +124,13 @@ const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-fr
   '-profile:v', 'high', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv', '-an', base + '.video.mp4'],
   { stdio: ['pipe', 'inherit', 'inherit'] });
 
+const evAt = k => JSON.stringify(keys.filter(e => Math.round(e.t * FPS) === k));
+let lead = 0;                                                     // run a tour to its first picture; these frames are not recorded
+for (; lead < 2400 && !(await evalJs('__live()')); lead++) { await evalJs(`__step(${evAt(lead)})`); await evalJs('__audio()'); }
+await evalJs(`__lead(${lead})`);
 const t0 = Date.now(); let prevHash = '', dups = 0, lastStats = ''; const dupAt = [];
 for (let k = 0; k < N; k++) {
-  const ev = keys.filter(e => Math.round(e.t * FPS) === k);
-  const stats = await evalJs(`__step(${JSON.stringify(ev)})`);
+  const stats = await evalJs(`__step(${evAt(k + lead)})`);
   const r = await send('Page.captureScreenshot', PREVIEW ? { format: fmt, quality: 82 } : { format: fmt, optimizeForSpeed: true });
   if (!r.result?.data) { console.log('SCREENSHOT_FAILED at frame', k, JSON.stringify(r.error || {})); break; }
   const buf = Buffer.from(r.result.data, 'base64'), h = crypto.createHash('md5').update(buf).digest('hex');
@@ -138,7 +144,7 @@ const [b64len, peak] = await evalJs('__audio()');
 let b64 = ''; for (let a = 0; a < b64len; a += 1 << 20) b64 += await evalJs(`__pcm.slice(${a}, ${a + (1 << 20)})`);
 fs.writeFileSync(base + '.pcm', Buffer.from(b64, 'base64'));
 console.log('duplicates after 5 s:', dupAt.filter(k => k > 300).length, 'last duplicate frame:', dupAt.at(-1));
-console.log(`frames=${N} duplicateFrames=${dups} audioPeak=${peak.toFixed(3)} captureSeconds=${((Date.now() - t0) / 1000).toFixed(0)}`);
+console.log(`frames=${N} framesBefore=${lead} duplicateFrames=${dups} audioPeak=${peak.toFixed(3)} captureSeconds=${((Date.now() - t0) / 1000).toFixed(0)}`);
 console.log('LOGS (' + logs.length + '):'); for (const l of logs.slice(0, 30)) console.log('  ' + l.slice(0, 600));
 ws.close(); await cleanup();
 
