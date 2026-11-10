@@ -1,13 +1,13 @@
 // Frame-exact recorder: steps the page on a virtual 60 Hz clock in headless Chrome, screenshots every frame,
 // renders the page's Web Audio through an OfflineAudioContext in lockstep, and encodes both with ffmpeg.
-// usage: node record.mjs <url> <out.mp4> <seconds> [W] [H] ['<keys json: [{t,type,code}]>'] [crf]
+// usage: node record.mjs <url> <out.mp4> <seconds> [W] [H] ['<keys json: [{t,type,code}]>'] [crf] [maxrate in Mbit/s]
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 
-const [url, out, secs, W = '1920', H = '1080', keysJson = '[]', crf = '15'] = process.argv.slice(2);
+const [url, out, secs, W = '1920', H = '1080', keysJson = '[]', crf = '15', rate = '24'] = process.argv.slice(2);
 const FPS = 60, N = Math.round(+secs * FPS), keys = JSON.parse(keysJson), PREVIEW = +W < 1000;
 const dir = path.dirname(out), base = out.replace(/\.mp4$/, '');
 const FADE = 0.6;
@@ -117,7 +117,7 @@ await evalJs('document.fonts.ready.then(() => 1)');
 const fmt = PREVIEW ? 'jpeg' : 'png';
 const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(FPS), '-c:v', PREVIEW ? 'mjpeg' : 'png', '-i', '-',
   '-vf', `scale=in_range=pc:out_range=tv:out_color_matrix=bt709,format=yuv420p,fade=t=out:st=${+secs - FADE}:d=${FADE}`,
-  '-c:v', 'libx264', '-preset', PREVIEW ? 'veryfast' : 'slow', '-crf', PREVIEW ? '23' : crf, ...(PREVIEW ? [] : ['-maxrate', '24M', '-bufsize', '48M']),
+  '-c:v', 'libx264', '-preset', PREVIEW ? 'veryfast' : 'slow', '-crf', PREVIEW ? '23' : crf, ...(PREVIEW ? [] : ['-maxrate', rate + 'M', '-bufsize', 2 * rate + 'M']),
   '-profile:v', 'high', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv', '-an', base + '.video.mp4'],
   { stdio: ['pipe', 'inherit', 'inherit'] });
 
