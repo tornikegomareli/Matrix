@@ -1,4 +1,4 @@
-# Code City
+# matrix-vibe
 
 An endless night city in the rain, graded like the simulated world of the Matrix films. You fly through it.
 The page is a small Vite project: plain JavaScript modules and Three.js. It has no server code.
