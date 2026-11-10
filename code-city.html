@@ -1608,8 +1608,8 @@ function updateTraffic(dt, time, px, pz, vx, vz) {
       const need = c.v * c.v / (2 * room);
       acc = need > 2.2 ? -Math.min(need * 1.15, 14) : Math.min(2.5, (c.v0 - c.v) * 1.5, (Math.sqrt(4.4 * room) - c.v) * 3);
     }
-    c.v = Math.max(0, c.v + acc * dt); c.s += c.dir * c.v * dt;
-    c.brake = damp(c.brake, acc < -0.5 || c.v < 0.3 ? 1 : 0, 10, dt);
+    if (dt >= 0) { c.v = Math.max(0, c.v + acc * dt); c.brake = damp(c.brake, acc < -0.5 || c.v < 0.3 ? 1 : 0, 10, dt); }   // when time runs backwards a car keeps its speed
+    c.s += c.dir * c.v * dt;
     const off = c.dir * (2 + c.lane * 4);
     if (c.axis === 0) { c.x = c.s; c.z = c.line * CELL + off; A[i * 4 + 2] = c.dir > 0 ? 0 : 1; }
     else { c.x = c.line * CELL - off; c.z = c.s; A[i * 4 + 2] = c.dir > 0 ? 2 : 3; }
@@ -2547,6 +2547,7 @@ let started = false, fade = 0;
 })();
 
 // ───────────────────────── main loop ─────────────────────────
+let timeRate = 1;                                 // the pace of the world: 1 runs, 0 holds still, below 0 runs backwards
 let last = performance.now(), worldT = 0, rainT = 0, realT = 0, fpsT = last, fpsN = 0, fps = 60, lowN = 0;
 function frame(now) {
   requestAnimationFrame(frame);
@@ -2569,8 +2570,8 @@ function frame(now) {
     return;
   }
   P.slow = damp(P.slow, (keys.KeyF || touch.slow) ? 1 : 0, 7, rdt);
-  const dt = rdt * lerp(1, 0.1, P.slow), cdt = rdt * lerp(1, cineOn ? 0.22 : 0.4, P.slow);   // world at 10%, the flyer keeps some pace
-  worldT += dt; rainT += rdt * lerp(1, 0.012, P.slow);                       // rain all but freezes
+  const dt = rdt * lerp(1, 0.1, P.slow) * timeRate, cdt = rdt * lerp(1, cineOn ? 0.22 : 0.4, P.slow);   // world at 10%, the flyer keeps some pace
+  worldT += dt; rainT += rdt * lerp(1, 0.012, P.slow) * timeRate;            // rain all but freezes
   if (cineOn) stepCine(cdt, rdt); else stepManual(cdt, rdt);
   const vs = cineOn ? 1 : cdt / rdt;
   P.speed = P.vel.length();
@@ -2599,7 +2600,7 @@ function frame(now) {
   ribGeo.instanceCount = ribN;
   for (const k in ribGeo.attributes) if (ribGeo.attributes[k].isInstancedBufferAttribute) ribGeo.attributes[k].needsUpdate = true;
 
-  U.uTime.value = worldT; U.uRTime.value = realT; U.uBoost.value = P.boost; U.uSlow.value = P.slow;
+  U.uTime.value = worldT; U.uRTime.value = realT; U.uBoost.value = P.boost; U.uSlow.value = Math.max(P.slow, 1 - Math.min(1, Math.abs(timeRate)));   // a world that holds still hangs its drops like bullet time
   U.uCamVel.value.copy(P.vel).multiplyScalar(vs);
   const alt = P.pos.y;
   U.uCloud.value = damp(U.uCloud.value, cloudAt(P.pos.x, alt, P.pos.z), 5, rdt);          // how deep in cloud the camera is
@@ -2609,7 +2610,7 @@ function frame(now) {
   const near = lerp(0.5, 10, smooth(800, 1600, alt));
   if (Math.abs(near - camera.near) > 0.01) { camera.near = near; camera.updateProjectionMatrix(); }
   U.uNF.value.set(camera.near, camera.far);
-  matRain.uniforms.uRainT.value = rainT; matRain.uniforms.uRainScale.value = lerp(1, 0.012, P.slow);
+  matRain.uniforms.uRainT.value = rainT; matRain.uniforms.uRainScale.value = lerp(1, 0.012, P.slow) * timeRate;
   matGround.uniforms.uCenter.value.set(Math.round(px / CELL) * CELL, Math.round(pz / CELL) * CELL);
   const cu = matComp.uniforms, sn = Math.min(1.7, P.speed * vs / MACH), hf = camera.fov * Math.PI / 180;
   cu.uTime.value = realT; cu.uSpeedN.value = sn * smooth(0.05, 0.35, sn);
