@@ -9,15 +9,13 @@
 // A tour starts the music of the page from its beginning.
 (() => {
   const D = window.__tourDef, V = THREE.Vector3;
-  const HOOK = 1.8;
   const LISTS = { film: [['film', 41.3]], reel: [['city', 26], ['train', 6.8], ['wave', 6.6], ['sky', 30.6]], loop: [['loop', 45.2]], poster: [['poster', 60]] };
-  let list = LISTS[D.scene];
+  const list = LISTS[D.scene];
   if (!list) { console.warn('tour: there is no tour named ' + D.scene); return; }
-  if (new URLSearchParams(location.search).has('hook')) list = [['hook', HOOK], ...list];   // &hook: a short shot in front of the tour, for the first frame of a video
   if (seedHex() !== 'C0DEC17E') { location.hash = 'seed=C0DEC17E'; location.reload(); return; }
   const M = [0.4082, 0.4082, -0.8165];                              // moon direction (from the sky shader)
   const pageStep = stepCine, keep = { glitch: S.glitch };
-  const W0 = { film: 55, city: 0, train: 100, wave: 200, sky: 1090, loop: 300, hook: 300, poster: 300 };   // the world clock at the start of each scene
+  const W0 = { film: 55, city: 0, train: 100, wave: 200, sky: 1090, loop: 300, poster: 300 };   // the world clock at the start of each scene
 
   // ── overlays ──
   const els = [], GREEN = '#39ff7a', MONO = 'ui-monospace,"SF Mono",Menlo,Consolas,monospace';
@@ -63,25 +61,6 @@
 
   // ── scenes ──
   const scenes = {
-    // a shot to open a video with: its first frame is the picture a video is judged by. The recompile wave comes at the camera:
-    // a band of towers that are code, between the city that was and the city that will be. The shot is made ready behind black, 2 seconds before it shows
-    hook() {
-      S.glitch = 0; refreshUI(); standing(); fx.nextFlash = 99;
-      const ov = mk('position:fixed;inset:0;z-index:20;background:#000;pointer-events:none');
-      const sound = waveSound; waveSound = () => {};                 // the page would time the sound of the wave for its own pace
-      const D0 = 150, D1 = 45;                                       // the front is 150 m ahead at the first frame and 45 m ahead at the cut. The towers before it are code
-      const ahead = t => D0 + (D1 - D0) * (1 - Math.pow(1 - clamp(t / HOOK, 0, 1), 2));
-      const frame = t => {
-        ov.style.display = t < 0 ? 'block' : 'none';
-        if (wave.phase === 'run') wave.front = -P.pos.z - (t < 0 ? 1400 : ahead(t));   // the front, on the axis the wave moves along (0, -1)
-      };
-      return { pos: [[-2, 500, 95, -760], [0, 500, 95, -760], [HOOK, 500, 85, -714]], look: [{ t: 0, p: [500, 70, -460], w: 1 }], frame, t0: -2, now: true, boost: [], bank: [[0, 0]],
-        ev: [[-1.9, waveDir(0, -1)], [0, () => { playMusic(true); sound(HOOK - 0.5); }], [0.3, strike(160, 420)]],
-        end() {                                                      // the wave is called off: the city stays the one the paths are written for
-          waveSound = sound;
-          if (wave.phase) { wave.phase = 'post'; wave.front = -1e12; wave.on = false; U.uWave.value.z = -1e12; for (const ch of chunks.values()) rebuildQ.push(ch); far.dirty = true; }
-        } };
-    },
     // the film: text on black, the text shatters into digital rain, the camera pushes through it and the city builds itself,
     // a rooftop, the jump, bullet time above the skyline, a fast run through the city, and up through the clouds into silence
     film() {

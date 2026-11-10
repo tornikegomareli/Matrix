@@ -57,16 +57,6 @@ Times are seconds from the start of the scene. Positions are metres. `y` is up.
 The film also draws two overlays itself: the typed text, and a wall of falling glyphs on a 2D canvas.
 The glyphs are drawn once into a sprite sheet with their glow. Each frame only copies sprites, so the wall costs little.
 
-## An opening shot for a video
-
-Add `&hook=1` to the address of a tour. The tour then opens with a shot of 1.8 seconds.
-The recompile wave comes at the camera, and the towers in front of it are code. A bolt of lightning strikes after 0.3 seconds.
-The first frame of the shot is made to be the first frame of a video, because a video is judged by that picture.
-
-The shot is made ready behind black for 2 seconds, because the wave needs that time to start. The recorder leaves those 2 seconds out.
-The scene holds the front of the wave itself: 150 m ahead of the camera at the first frame, 45 m ahead at the cut.
-When the shot ends the wave is called off, so the city stays the one the paths are written for.
-
 ## What a tour can change in the page
 
 The page has a few variables and uniforms that only a tour sets. A scene that sets one must set it back in `end`.

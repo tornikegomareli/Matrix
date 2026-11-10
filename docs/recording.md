@@ -40,11 +40,10 @@ node record.mjs "http://127.0.0.1:8931/code-city.html?tour=loop#seed=C0DEC17E" l
 For 3840×2160, add `pixels=8.3` to the address. Without it the page renders 2.3 million pixels and the video is an enlargement.
 
 ```sh
-node record.mjs "http://127.0.0.1:8931/code-city.html?tour=reel&hook=1&pixels=8.3#seed=C0DEC17E" reel-4k.mp4 71.7 3840 2160 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]' 15 48
+node record.mjs "http://127.0.0.1:8931/code-city.html?tour=reel&pixels=8.3#seed=C0DEC17E" reel-4k.mp4 69.9 3840 2160 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]' 15 48
 ```
 
-`hook=1` puts the opening shot in front of the tour (see [tours.md](tours.md)). The first frame of the video is then the first frame of that shot.
-71.7 seconds is the shot and the reel together, less the last 0.1 second. The video therefore ends before the page shows its controls again.
+69.9 seconds is the reel less its last 0.1 second. The video therefore ends before the page shows its controls again.
 
 ## How it works
 
