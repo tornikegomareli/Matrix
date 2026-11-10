@@ -1,0 +1,6 @@
+// Cloudflare: the built site is served as static files. There is no server code.
+{
+  "name": "matrix-vibe",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./dist" }
+}
