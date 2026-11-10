@@ -170,6 +170,7 @@ const U = {
   uCamVel: { value: new THREE.Vector3() }, uBoost: { value: 0 }, uSlow: { value: 0 },
   uAbove: { value: 0 }, uFlashPos: { value: new THREE.Vector3() },
   uNear: { value: new THREE.Vector4() }, uWave: { value: new THREE.Vector4(1, 0, 0, 0) },
+  uDark: { value: new THREE.Vector4(0, 1, 0, 0) },
   uBuild: { value: new THREE.Vector4() }, uRainK: { value: 1 }, uNF: { value: new THREE.Vector2(0.5, 60000) }, tDepth: { value: null }, uCover: { value: null }, uNoise3: { value: null },
 };
 const mkMat = (vs, fs, extra, opts) => new THREE.ShaderMaterial(Object.assign({
@@ -184,6 +185,7 @@ uniform vec3 uFogCol, uFlashDir, uCamVel, uFlashPos;
 uniform vec2 uRes, uNF;
 uniform vec4 uWave;                                 // recompile front: direction x, z, position along it, active
 uniform vec4 uBuild;                                // the world being built: centre x, z, radius of the built part, active
+uniform vec4 uDark;                                 // the blackout wave: direction x, z, the place of its front along it, the width of the dark band (0 = no wave)
 uniform sampler2D uGlyph, uCover, tDepth;
 uniform sampler3D uNoise3;
 const float CLOUD_Y = 620.0, CLOUD_TOP = 1750.0;    // the clouds: the base, and the top of the highest tower
@@ -212,6 +214,16 @@ vec3 skyGrad(float y){
 }
 // while the world is built outward from a point: how far the front has passed p, in metres. A large number when nothing is being built
 float built(vec2 p){ return uBuild.w > 0.5 ? uBuild.z - distance(p, uBuild.xy) : 1e6; }
+// the share of its light that the blackout wave leaves a lamp at p. j (0..1) shifts single lamps against each other, so they go one by one
+float lightsOn(vec2 p, float j){
+  if (uDark.w <= 0.0) return 1.0;
+  float d = uDark.z - dot(p, uDark.xy) + (j - 0.5) * 90.0;                    // > 0: the front has passed this place
+  if (d < -40.0 || d > uDark.w + 70.0) return 1.0;
+  float fl = step(0.45, fract(uRTime * 21.0 + j * 13.0));                     // a tube that stutters
+  if (d < 0.0) return mix(1.0, fl, (d + 40.0) / 40.0 * 0.85);                 // it stutters before it goes out,
+  if (d > uDark.w) return mix(fl * 0.7, 1.0, (d - uDark.w) / 70.0);           // and again when it comes back
+  return 0.0;
+}
 // the cloud layer, 0..1 without the fine erosion. The ray march, the lights and the script all read this one field.
 float cloudBase(vec3 p, float lod){
   float y = p.y - CLOUD_Y;
@@ -385,7 +397,7 @@ void main(){
       float chg = floor(uTime * (0.25 + 0.7 * h21(id + seed)) + h21(id * 1.7 + seed) * 9.0);
       float gl = glyph(vec2(f2.x, 1.0 - f2.y), floor(h21(id + vec2(chg * 3.1, seed * 19.0)) * 64.0), dFdx(gp) / cs * vec2(1.0, -1.0), dFdy(gp) / cs * vec2(1.0, -1.0));
       float on = kind < 6.5 ? 1.0 : step(0.35, h21(id + floor(uTime * 0.6 + seed * 7.0)));
-      float flick = 1.0 - 0.7 * step(0.93, h11(seed * 77.0)) * step(0.5, fract(uTime * 7.0 + seed));
+      float flick = (1.0 - 0.7 * step(0.93, h11(seed * 77.0)) * step(0.5, fract(uTime * 7.0 + seed))) * lightsOn(vWP.xz, h11(seed * 3.1));
       float hs = h11(seed * 13.0);                                 // neon: green code, cyan, magenta, amber, white
       vec3 sc = hs < 0.30 ? vec3(0.2, 1.0, 0.42) : hs < 0.50 ? vec3(0.12, 0.80, 1.0) : hs < 0.68 ? vec3(1.0, 0.14, 0.50) : hs < 0.85 ? vec3(1.0, 0.52, 0.10) : vec3(0.95, 0.96, 1.0);
       float farK = 1.0 - smoothstep(0.3, 1.2, max(fwidth(c.x), fwidth(c.y)));
@@ -491,11 +503,11 @@ void main(){
       sh *= 1.0 - 0.5 * hp.z;
       glow = mix(win * lit * wb * sh * 1.35 * (1.0 - 0.75 * bar), glow, clamp(smoothstep(0.3, 0.55, lod) + smoothstep(170.0, 240.0, dist), 0.0, 1.0));
     }
-    emis += wc * 0.62 * mix(glow, pLit * 0.55 * smoothstep(240.0, 410.0, vBd), lod);
+    emis += wc * 0.62 * mix(glow, pLit * 0.55 * smoothstep(240.0, 410.0, vBd), lod) * lightsOn(vWP.xz, mix(r1, 0.5, lod));
     float crown = max(0.9, dist * 0.0022);
     if (pod < 0.5 && v > H - crown && h11(seed * 3.7) > 0.5 && vBd > 230.0) {                                                    // crown line
       float hc = h11(seed * 11.3);
-      emis += (hc < 0.40 ? vec3(0.92, 0.95, 1.0) : hc < 0.60 ? vec3(0.15, 0.72, 1.0) : hc < 0.75 ? vec3(1.0, 0.20, 0.28) : hc < 0.88 ? vec3(1.0, 0.58, 0.14) : C_CODE * 1.6) * 1.6 * (0.9 / crown);
+      emis += (hc < 0.40 ? vec3(0.92, 0.95, 1.0) : hc < 0.60 ? vec3(0.15, 0.72, 1.0) : hc < 0.75 ? vec3(1.0, 0.20, 0.28) : hc < 0.88 ? vec3(1.0, 0.58, 0.14) : C_CODE * 1.6) * 1.6 * (0.9 / crown) * lightsOn(vWP.xz, hc);
     }
     if (dist < 1000.0 && vBd > 200.0) {
       vec2 cr = codeRain(p, fseed, max(codeAmt * uCode, vWv * 0.95), dpx, dpy);
@@ -631,7 +643,7 @@ void main(){
   if (ax < 20.0) pool += lampPool(vec2(q.x, p.y), 1.0, 12.5) + lampPool(vec2(q.x, p.y), -1.0, 37.5);
   if (az < 20.0) pool += lampPool(vec2(q.y, p.x), 1.0, 12.5) + lampPool(vec2(q.y, p.x), -1.0, 37.5);
   float bl = smoothstep(0.0, 200.0, built(p));                  // 0 where the world is not built yet
-  pool = mix(pool, 0.06, lodG) * bl;
+  pool = mix(pool, 0.06, lodG) * bl * lightsOn(p, 0.5);
   vec3 lamp = C_LAMP;
   vec3 light = uFogCol * 3.2 + C_GLOW * 0.03 + lamp * pool * 0.62 + C_FLASH * uFlash * (0.2 + 0.8 * uFlashDir.y);
 
@@ -658,7 +670,7 @@ void main(){
   }
   vec3 outc = col * light * (1.0 - 0.5 * pud) + refl * F;
   outc += lamp * pool * 0.25 * gloss * dot(nrm, nrm) * 10.0;     // ripple glints under the lamps
-  outc += extra * bl + lamp * (exp(-dRoad * 0.1) * (1.0 - lodG) + 0.3 * lodG) * mix(0.06, 0.32, smoothstep(700.0, 1900.0, dist)) * smoothstep(250.0, 1100.0, dist) * bl;   // from far above the wet streets read as ribbons of light
+  outc += extra * bl + lamp * (exp(-dRoad * 0.1) * (1.0 - lodG) + 0.3 * lodG) * mix(0.06, 0.32, smoothstep(700.0, 1900.0, dist)) * smoothstep(250.0, 1100.0, dist) * bl * lightsOn(p, 0.5);   // from far above the wet streets read as ribbons of light
   if (bl < 1.0) {                                                // the world is being built: bare ground carries a measuring grid, and the front is a line of light
     vec2 g10 = abs(fract(p / 10.0) - 0.5);
     float l10 = (1.0 - smoothstep(0.0, 0.07 + fwp * 1.2, (0.5 - max(g10.x, g10.y)) * 10.0)) * (1.0 - smoothstep(1.5, 6.0, fwp));
@@ -736,6 +748,7 @@ void main(){
     float go = iL.w < 0.5 ? step(ph, 0.45) : step(0.5, ph) * step(ph, 0.95);
     c = mix(vec3(1.0, 0.12, 0.08), vec3(0.10, 1.0, 0.55), go); it = mix(2.0, 3.0, go);
   }
+  it *= lightsOn(lp.xz, fract(iL.z * 3.7));
   vec4 mv = viewMatrix * vec4(lp, 1.0);
   float d = length(mv.xyz);
   mv.xy += position.xy * max(iL.y, d * 0.0024);
