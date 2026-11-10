@@ -90,4 +90,5 @@ Each of those fragment shaders reads the scene depth texture and discards itself
 
 `resize()` sets the size of the render targets.
 It caps the picture at 2.3 million pixels (1.0 million on touch devices) and at a device pixel ratio of 2.
+The address parameter `pixels` sets another cap, in millions. `?pixels=8.3` lets a recording render 3840×2160 in full.
 If the frame rate stays below 48 for 1.5 seconds, the page multiplies the size by 0.85. The floor is 55%.

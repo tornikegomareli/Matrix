@@ -18,7 +18,7 @@ node record.mjs "http://127.0.0.1:8931/code-city.html#seed=C0DEC17E" out.mp4 26
 ```
 
 ```
-node record.mjs <url> <out.mp4> <seconds> [width] [height] [keys] [crf]
+node record.mjs <url> <out.mp4> <seconds> [width] [height] [keys] [crf] [rate]
 ```
 
 | Argument | Default | Meaning |
@@ -26,14 +26,25 @@ node record.mjs <url> <out.mp4> <seconds> [width] [height] [keys] [crf]
 | `width`, `height` | 1920, 1080 | Size of the video. Below 1,000 wide it records a fast preview (JPEG frames, lower quality). |
 | `keys` | `[]` | Key events as JSON: `[{"t": 4, "type": "keydown", "code": "KeyG"}]`. `t` is seconds. |
 | `crf` | 15 | x264 quality. Lower is better and larger. |
+| `rate` | 24 | The cap of the video bit rate, in Mbit/s. |
 
 It writes `<out>.video.mp4` and `<out>.pcm` next to the output, then joins them.
 
-A tour waits for a click or a key. Give the recorder a key event to start it:
+A tour waits for a click or a key. Give the recorder a key event to start it.
+The recording begins at the first picture of the tour. The frames before it, and their sound, are left out.
 
 ```sh
 node record.mjs "http://127.0.0.1:8931/code-city.html?tour=loop#seed=C0DEC17E" loop.mp4 47 1920 1080 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]'
 ```
+
+For 3840×2160, add `pixels=8.3` to the address. Without it the page renders 2.3 million pixels and the video is an enlargement.
+
+```sh
+node record.mjs "http://127.0.0.1:8931/code-city.html?tour=reel&hook=1&pixels=8.3#seed=C0DEC17E" reel-4k.mp4 71.7 3840 2160 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]' 15 48
+```
+
+`hook=1` puts the opening shot in front of the tour (see [tours.md](tours.md)). The first frame of the video is then the first frame of that shot.
+71.7 seconds is the shot and the reel together, less the last 0.1 second. The video therefore ends before the page shows its controls again.
 
 ## How it works
 
@@ -62,5 +73,5 @@ The script also counts frames that are identical to the one before. A count abov
 
 ## Limits
 
-- It records the page's own cinematic flight, with optional key events. It does not start the scripted tours: a tour waits for a click on its start screen.
+- It does not start a tour by itself. A tour waits on its start screen until the recorder sends the key event.
 - `code-city-1080p60.mp4` in this repository was recorded from the first version of the page.
