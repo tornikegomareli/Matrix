@@ -208,6 +208,7 @@
   const st = window.__tour = { t: 0, n: 0, go: false, f: new V(0, 0, 1), right: new V(1, 0, 0), roll: 0, head: 0, evi: 0 };
   const segAt = t => { let i = 0; while (i < SEGS.length - 1 && t >= SEGS[i + 1][0][0]) i++; return i; };
   const tan = (i, c) => {
+    if (K[i][4]) return 0;                                          // a key with a fifth value is a stop: the camera rests there
     const a = K[Math.max(0, i - 1)], b = K[Math.min(K.length - 1, i + 1)];
     return (b[c] - a[c]) / Math.max(1e-6, b[0] - a[0]);
   };
@@ -235,7 +236,14 @@
     }
     lookPt(L[L.length - 1], p, o); return L[L.length - 1].w;
   };
+  const upAt = (t, o) => {                                          // where the top of the camera points: straight up, unless the scene has `upv` keys { t, u }
+    const L = sc.upv; if (!L) return o.set(0, 1, 0);
+    if (t <= L[0].t) return o.fromArray(L[0].u).normalize();
+    for (let i = 0; i < L.length - 1; i++) if (t < L[i + 1].t) return o.fromArray(L[i].u).lerp(tmp2.fromArray(L[i + 1].u), smooth(L[i].t, L[i + 1].t, t)).normalize();
+    return o.fromArray(L[L.length - 1].u).normalize();
+  };
   const enter = i => {                                              // start scene i of the list
+    if (sc && sc.end) sc.end();
     li = i; worldT = W0[list[i][0]]; sc = scenes[list[i][0]]();
     SEGS = Array.isArray(sc.pos[0][0]) ? sc.pos : [sc.pos]; K = SEGS[0]; segI = 0;
     sc.ev.sort((a, b) => a[0] - b[0]);
@@ -250,6 +258,7 @@
   };
   const finish = () => {                                            // hand the camera back to the page's own cinematic flight
     if (done) return; done = true;
+    if (sc.end) sc.end();
     stepCine = pageStep; removeEventListener('keydown', onKey, true); keys.KeyF = false; cine.pan = 0;
     S.glitch = keep.glitch; refreshUI(); fx.nextFlash = 5; started = true;
     canvas.style.cursor = ''; $('ui').style.display = ''; $('hint').style.display = ''; $('hint').classList.remove('fade');
@@ -259,18 +268,23 @@
     startCine();
   };
 
-  const p = new V(), q = new V(), f2 = new V(), tg = new V(), up = new V(), back = new V(), m4 = new THREE.Matrix4(), qr = new THREE.Quaternion();
+  const p = new V(), q = new V(), f2 = new V(), tg = new V(), up = new V(), ut = new V(), back = new V(), m4 = new THREE.Matrix4(), qr = new THREE.Quaternion();
   stepCine = function (dt, rdt) {
     if (!st.go) { camera.position.copy(P.pos); return; }             // waiting for the click
     st.t += rdt; st.n++;
-    if (st.n === (li > 0 ? 3 : 20)) { started = true; if (li > 0) fade = 1; }
+    if (st.n === (li > 0 || sc.now ? 3 : 20)) { started = true; if (li > 0 || sc.now) fade = 1; }   // now: the scene opens on a full picture
     const t = st.t, dur = list[li][1], more = li + 1 < list.length;
     if (t >= dur) { if (more) { enter(li + 1); fader.style.opacity = 1; } else finish(); return; }
     fader.style.opacity = Math.max(more ? clamp((t - (dur - 0.35)) / 0.35, 0, 1) : 0, li > 0 ? clamp(-t / 0.4, 0, 1) : 0);   // black between scenes
     if (more && t > dur - 0.4 && !sc.duck) { sc.duck = true; master.gain.setTargetAtTime(0.03, AC.currentTime, 0.1); }
-    if (li > 0 && t > -0.45 && !sc.up) { sc.up = true; master.gain.setTargetAtTime(0.42, AC.currentTime, 0.15); }
-    const first = st.n === 1 || segAt(t) !== segI; segI = segAt(t);  // the first frame of a scene, or a cut inside it
-    if (sc.frame) sc.frame(t);
+    if (li > 0 && t > -0.45 && !sc.rose) { sc.rose = true; master.gain.setTargetAtTime(0.42, AC.currentTime, 0.15); }
+    if (sc.frame) sc.frame(t, rdt);
+    if (sc.custom && sc.custom(t, rdt)) {                           // the scene moves the camera itself for now
+      st.cust = true;
+      while (st.evi < sc.ev.length && sc.ev[st.evi][0] <= t) sc.ev[st.evi++][1]();
+      return;
+    }
+    const first = st.n === 1 || segAt(t) !== segI || st.cust; segI = segAt(t); st.cust = false;   // the first frame of a scene, or a cut inside it
     evalPos(t, p); evalPos(Math.min(t + 0.3, SEGS[segI][SEGS[segI].length - 1][0] - 1e-3), q);
     if (first) { evalPos(t, P.pos); st.roll = 0; }
     P.vel.copy(p).sub(P.pos).divideScalar(Math.max(rdt, 1e-4)).clampLength(0, 950);
@@ -285,9 +299,10 @@
     st.right.addScaledVector(f, -st.right.dot(f));
     if (st.right.lengthSq() < 1e-6) st.right.set(1, 0, 0);
     st.right.normalize();
-    const lvl = 1 - smooth(0.8, 0.97, Math.abs(f.y));
+    upAt(t, ut);
+    const lvl = 1 - smooth(0.8, 0.97, Math.abs(f.dot(ut)));
     if (lvl > 0) {
-      up.crossVectors(f, WORLD_UP).normalize();
+      up.crossVectors(f, ut).normalize();
       if (first) st.right.copy(up); else st.right.lerp(up, (1 - Math.exp(-lerp(30, 3, smooth(6, 45, v)) * rdt)) * lvl);   // a slow camera keeps the horizon level
       if (st.right.lengthSq() < 1e-4) st.right.copy(up);
       st.right.addScaledVector(f, -st.right.dot(f)).normalize();
@@ -301,7 +316,7 @@
     P.yawRate = damp(P.yawRate, yr, 8, rdt);
     const pitch = Math.asin(clamp(f.y, -1, 1));
     P.pitchRate = first ? 0 : damp(P.pitchRate, (pitch - P.pitch) / Math.max(rdt, 1e-4), 8, rdt); P.pitch = pitch;
-    st.roll = damp(st.roll, clamp(Math.atan(P.yawRate * v * Math.hypot(f.x, f.z) / 45), -0.5, 0.5), 3, rdt); P.roll = st.roll;   // a gentle bank
+    st.roll = damp(st.roll, clamp(Math.atan(P.yawRate * v * Math.hypot(f.x, f.z) / 45), -0.5, 0.5) * smooth(0.9, 1, ut.y) * (sc.bank ? lin(sc.bank, t) : 1), 3, rdt); P.roll = st.roll;   // a gentle bank
     back.copy(f).negate();
     camera.quaternion.setFromRotationMatrix(m4.makeBasis(st.right, up, back)).multiply(qr.setFromAxisAngle(Z_AXIS, st.roll));
     camera.position.copy(p);
