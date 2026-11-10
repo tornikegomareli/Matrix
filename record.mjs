@@ -25,6 +25,7 @@ const SHIM = `(() => {
   Math.random = () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const off = new OfflineAudioContext(2, Math.round(N / FPS * SR), SR);
   window.AudioContext = function () { return off; };
+  const resume = off.resume.bind(off); off.resume = () => Promise.resolve();   // only the recorder runs this clock: a page that resumes its audio would let it run ahead
   let aStarted = false, aDone = null;
   const anims = new Map();
   const syncAnims = () => {
@@ -53,7 +54,7 @@ const SHIM = `(() => {
   };
   window.__audio = async () => {                                  // render audio up to the start of the next frame
     if (frame >= N) {
-      if (!aStarted) aDone = off.startRendering(); else off.resume();
+      if (!aStarted) aDone = off.startRendering(); else resume();
       const buf = await aDone, n = buf.length, L = buf.getChannelData(0), R = buf.getChannelData(1);
       const pcm = new Int16Array(n * 2); let peak = 0;
       for (let i = 0; i < n; i++) {
@@ -66,7 +67,7 @@ const SHIM = `(() => {
       return [window.__pcm.length, peak];
     }
     const p = off.suspend(frame / FPS);
-    if (!aStarted) { aStarted = true; aDone = off.startRendering(); } else off.resume();
+    if (!aStarted) { aStarted = true; aDone = off.startRendering(); } else resume();
     await p; return off.currentTime;
   };
 })()`;
