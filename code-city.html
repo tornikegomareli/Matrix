@@ -2186,11 +2186,11 @@ function cineAhead(dist, out) {                                   // a point `di
 const _p = new THREE.Vector3(), _q = new THREE.Vector3(), _t = new THREE.Vector3(), _up = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _qr = new THREE.Quaternion(), Z_AXIS = new THREE.Vector3(0, 0, 1), WORLD_UP = new THREE.Vector3(0, 1, 0);
 function stepCine(dt, rdt) {
-  if (cine.pan > 0) {                                             // first look around: one slow turn while rising above the street
-    cine.pan = Math.max(0, cine.pan - rdt / 10);
+  if (cine.pan > 0) {                                             // first look around: a slow sweep while rising above the street. It ends on the heading of the route
+    cine.pan = Math.max(0, cine.pan - rdt / 13);
     const k = 1 - cine.pan, e = k * k * (3 - 2 * k);
-    P.pos.y = cine.y0 + 70 * e; P.vel.set(0, 0, 0); P.yaw = cine.yaw0 + e * TAU; P.pitch = 0.1 * Math.sin(e * Math.PI) - 0.04; P.roll = 0; P.boost = 0;
-    P.yawRate = damp(P.yawRate, TAU * 6 * k * (1 - k) / 10, 8, rdt); P.pitchRate = 0;
+    P.pos.y = cine.y0 + 70 * e; P.vel.set(0, 0, 0); P.yaw = cine.yaw0 - (1 - e) * 2.6; P.pitch = 0.1 * Math.sin(e * Math.PI) - 0.04; P.roll = 0; P.boost = 0;
+    P.yawRate = damp(P.yawRate, 2.6 * 6 * k * (1 - k) / 13, 8, rdt); P.pitchRate = 0;
     camera.position.copy(P.pos); camera.rotation.set(P.pitch, P.yaw, 0, 'YXZ');
     if (cine.pan === 0) { P.yaw = cine.yaw0; P.pitch = -0.04; startCine(); }
     return;
@@ -2592,7 +2592,7 @@ function frame(now) {
   const cu = matComp.uniforms, sn = Math.min(1.7, P.speed * vs / MACH), hf = camera.fov * Math.PI / 180;
   cu.uTime.value = realT; cu.uSpeedN.value = sn * smooth(0.05, 0.35, sn);
   cu.uTrail.value = 0.55 * P.slow;
-  cu.uRot.value.set(clamp(P.yawRate * rdt * 0.5 / (hf * camera.aspect), -0.05, 0.05), clamp(-P.pitchRate * rdt * 0.5 / hf, -0.05, 0.05));
+  cu.uRot.value.set(clamp(P.yawRate * rdt * 0.25 / (hf * camera.aspect), -0.05, 0.05), clamp(-P.pitchRate * rdt * 0.25 / hf, -0.05, 0.05));
   fu.uScan.value = fx.scan; fu.uTear.value = fx.tear; fu.uCA.value = fx.ca + 0.0012 * P.boost + 0.0015 * P.slow;
   fade = started ? Math.min(1, fade + rdt / 2.4) : 0; fu.uFade.value = fade * fade * (3 - 2 * fade);
   renderScene();
