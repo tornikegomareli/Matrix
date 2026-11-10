@@ -57,6 +57,13 @@ Times are seconds from the start of the scene. Positions are metres. `y` is up.
 The film also draws two overlays itself: the typed text, and a wall of falling glyphs on a 2D canvas.
 The glyphs are drawn once into a sprite sheet with their glow. Each frame only copies sprites, so the wall costs little.
 
+## A still picture
+
+`?tour=poster` is one scene. The camera stands still over the roofs and looks west. One second in, lightning strikes the mast that is most in front of the camera.
+The scene exists for one picture: the first frame of a video, which is the picture a video is judged by.
+The first frame of the 4K video of the reel is a screenshot of this scene a moment after the strike, at 3840×2160 (`&pixels=8.3`). Its corners were darkened a little afterwards.
+The recorder puts such a picture in front of a recording (see [recording.md](recording.md)). The reel itself is not changed.
+
 ## What a tour can change in the page
 
 The page has a few variables and uniforms that only a tour sets. A scene that sets one must set it back in `end`.

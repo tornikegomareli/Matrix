@@ -22,6 +22,7 @@ Then open one of these addresses:
 | `http://127.0.0.1:8931/code-city.html?tour=film` | A 41 second scripted film. |
 | `http://127.0.0.1:8931/code-city.html?tour=reel` | A 70 second scripted tour of the world. |
 | `http://127.0.0.1:8931/code-city.html?tour=loop` | A 45 second scripted film: one night that repeats. |
+| `http://127.0.0.1:8931/code-city.html?tour=poster` | A still scene: lightning over the skyline. The first frame of the reel video is a picture of it. |
 
 Add `#seed=C0DEC17E` (any eight hex digits) to get the same city again.
 You can also open `code-city.html` from disk. The tours and the music need the local server.

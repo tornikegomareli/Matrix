@@ -18,7 +18,7 @@ node record.mjs "http://127.0.0.1:8931/code-city.html#seed=C0DEC17E" out.mp4 26
 ```
 
 ```
-node record.mjs <url> <out.mp4> <seconds> [width] [height] [keys] [crf] [rate]
+node record.mjs <url> <out.mp4> <seconds> [width] [height] [keys] [crf] [rate] [first]
 ```
 
 | Argument | Default | Meaning |
@@ -27,6 +27,7 @@ node record.mjs <url> <out.mp4> <seconds> [width] [height] [keys] [crf] [rate]
 | `keys` | `[]` | Key events as JSON: `[{"t": 4, "type": "keydown", "code": "KeyG"}]`. `t` is seconds. |
 | `crf` | 15 | x264 quality. Lower is better and larger. |
 | `rate` | 24 | The cap of the video bit rate, in Mbit/s. |
+| `first` | none | A PNG of the size of the video. It is put in front of the recording for a quarter of a second, so it is the first frame. There is silence under it. |
 
 It writes `<out>.video.mp4` and `<out>.pcm` next to the output, then joins them.
 
@@ -40,10 +41,11 @@ node record.mjs "http://127.0.0.1:8931/code-city.html?tour=loop#seed=C0DEC17E" l
 For 3840×2160, add `pixels=8.3` to the address. Without it the page renders 2.3 million pixels and the video is an enlargement.
 
 ```sh
-node record.mjs "http://127.0.0.1:8931/code-city.html?tour=reel&pixels=8.3#seed=C0DEC17E" reel-4k.mp4 69.9 3840 2160 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]' 15 48
+node record.mjs "http://127.0.0.1:8931/code-city.html?tour=reel&pixels=8.3#seed=C0DEC17E" reel-4k.mp4 69.9 3840 2160 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]' 15 48 first.png
 ```
 
 69.9 seconds is the reel less its last 0.1 second. The video therefore ends before the page shows its controls again.
+`first.png` is the picture that the video begins with (see [tours.md](tours.md)).
 
 ## How it works
 
