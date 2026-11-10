@@ -29,6 +29,12 @@ node record.mjs <url> <out.mp4> <seconds> [width] [height] [keys] [crf]
 
 It writes `<out>.video.mp4` and `<out>.pcm` next to the output, then joins them.
 
+A tour waits for a click or a key. Give the recorder a key event to start it:
+
+```sh
+node record.mjs "http://127.0.0.1:8931/code-city.html?tour=loop#seed=C0DEC17E" loop.mp4 47 1920 1080 '[{"t": 0.5, "type": "keydown", "code": "Enter"}]'
+```
+
 ## How it works
 
 The script starts headless Chrome with the real GPU and drives it over the Chrome DevTools Protocol.

@@ -27,6 +27,21 @@ They were cut, turned into loops where needed, and encoded as mono MP3 at 32 kHz
 | `static` | "Static B" | Oreocooke, Wikimedia Commons | CC0 |
 | `thunderA`, `thunderB`, `thunderC` | "Storm, Thunderbolts" (three strikes cut from it) | stephan, pdsounds.org record 301, via Wikimedia Commons | Public domain |
 
+### Sounds of the third film
+
+These are files in `tour-snd/`, mono MP3. The licence of each was read from Wikimedia Commons.
+
+| File | Recording | Author, source | Licence |
+|---|---|---|---|
+| `tick.mp3` | "Clock ticking" (one tick cut from it) | natalie, Wikimedia Commons | Public domain |
+| `horn.mp3` | "Car Horn" | 15HPanska_Ruttner_Jan, Wikimedia Commons | CC0 |
+| `cat.mp3` | "Meow of a Siamese cat" | freemaster2, freesound.org, via Wikimedia Commons | CC0 |
+| `lighter.mp3` | "Cheap cigarette lighter" | stephan, Wikimedia Commons | Public domain |
+| `glass.mp3` | "Bruit des bris de bouteilles dans un conteneur à verre, rue Saint-Pierre à Beynost (janvier 2020)" (bottles that break in a container, not a pane) | Benoît Prieur, Wikimedia Commons | CC0 |
+| `crash.mp3` | "Land Rover Destruction" (the sound of the video: one hit) | United States Customs and Border Protection, via Wikimedia Commons | Public domain |
+| `crowd.mp3` | "large-crowd-medium-distance-stereo" | eguobyte, freesound.org 360703, via Wikimedia Commons | CC0 |
+| `powerdown.mp3` | "Computer cd recorder badly fixed end of copy" | ezwa, Wikimedia Commons | Public domain |
+
 ## Music
 
 | File | Track | Author, source | Licence |

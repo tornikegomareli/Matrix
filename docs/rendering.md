@@ -102,3 +102,12 @@ The grade then leans the whole picture toward green, as the films do for scenes 
 5. push the darkest shadows deeper.
 
 The green of the code itself is not graded in. The code is emitted green.
+
+## Effects for the tours
+
+Four effects are off in normal flight. A tour turns them on. [tours.md](tours.md) lists the names.
+
+- **The fold.** The vertex shaders of the buildings, the ground and the cars bend every point beyond a line across z around a circle. Light and fog are computed for the place a point had before the bend.
+- **The blackout.** A band of dark crosses the city. Windows, street lamps and the glow of the street go out in it, one by one. The code on the walls and the lights of the cars stay.
+- **Depth of field.** The composite pass spreads each pixel into a disc. Its radius comes from the distance of the pixel and the focus distance. A sharp thing in front does not smear over what is behind it.
+- **Local lamps, wall cuts and the indoor box.** Six point lamps light the buildings, the ground and the cars. Two boxes cut openings in walls. One box is indoors: it has no rain and no light from the street.

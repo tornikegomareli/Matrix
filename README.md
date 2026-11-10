@@ -21,6 +21,7 @@ Then open one of these addresses:
 | `http://127.0.0.1:8931/code-city.html` | The world. It flies by itself until you take the controls. |
 | `http://127.0.0.1:8931/code-city.html?tour=film` | A 41 second scripted film. |
 | `http://127.0.0.1:8931/code-city.html?tour=reel` | A 70 second scripted tour of the world. |
+| `http://127.0.0.1:8931/code-city.html?tour=loop` | A 45 second scripted film: one night that repeats. |
 
 Add `#seed=C0DEC17E` (any eight hex digits) to get the same city again.
 You can also open `code-city.html` from disk. The tours and the music need the local server.
@@ -51,7 +52,8 @@ On a touch screen there is a stick, a boost button, a time button and a cinemati
 | File | Purpose |
 |---|---|
 | `code-city.html` | The world: markup, styles, one JavaScript module, all shaders, and the embedded data. |
-| `tour.js` | The two scripted tours. The page loads it only when the address has `?tour=`. |
+| `tour.js` | The three scripted tours. The page loads it only when the address has `?tour=`. |
+| `tour-snd/` | Recordings for the third tour. The tour fetches them, so they play only over http. |
 | `music.mp3` | The background music. The page fetches it, so it plays only over http. |
 | `record.mjs` | A frame-exact video recorder for the page (Node.js, Chrome, ffmpeg). |
 | `code-city-1080p60.mp4` | A recording of the first version. It does not show the current look. |

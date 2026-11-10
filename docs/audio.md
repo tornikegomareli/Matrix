@@ -3,7 +3,7 @@
 ## The rule
 
 Every sound is a recording. The script synthesises nothing: no oscillators and no generated noise.
-It only loops, filters, pans, changes the playback rate and mixes.
+It only loops, filters, pans, changes the playback rate and mixes. The third film also plays two recordings from their end.
 
 The one generated buffer is the impulse response of the reverb. It is a filter for the recordings, not a sound.
 
@@ -79,3 +79,26 @@ While the world is still being built at the start, the city and the idle wind ar
 | Impact | A recorded thud, scaled by the speed of the hit. |
 | Glitch | Short cuts of television static. |
 | Recompile wave | The wind loop, rising in pitch and level as the front comes, then a deep bang when it arrives. |
+
+## The third film
+
+The film `?tour=loop` has recordings of its own in `tour-snd/`. It fetches them when it starts. A file that is missing is a silent one.
+
+| Recording | Use |
+|---|---|
+| `tick` | The clock. It comes in at 18 s. Every tick is one shot, set a little ahead of its time, so the beat is even. The gap falls from 1.0 s to 0.15 s at the cut. |
+| `horn` | Two blasts, 0.85 s apart: at the kerb, heard from the roof, and at the landing. |
+| `cat` | The cat, each time it crosses. |
+| `lighter` | The cook's lighter, each time his loop comes round. Not while the camera is inside the tower. |
+| `powerdown` | The blackout. Five recorded thuds follow it, each louder. |
+| `glass`, `crash` | Played from their end, so the sound stops at the moment the glass is whole and at the moment the cars part. |
+| `crowd` | The people in the corridor. |
+
+The film changes the graph while it runs, and puts it back when it ends:
+
+- Its sounds and the music go round the compressor, into a bus of their own. A ceiling after the last gain keeps the sum below full scale.
+- The music is on that bus so that it plays on in a frozen frame. Measured in a recording, it is 6.3 to 8.6 dB below everything else.
+- In a frozen frame the weather falls to 4 % of its level. Behind the walls of the tower it is lower, and a lowpass filter at 700 Hz makes it dull.
+- A sound with a place is panned by where it is, and distance lowers it.
+- At 42 s the last gain goes to 0 in one step. In a recording, what follows is digital silence.
+- The rush of the rewind is the wind recording, played fast and rising.
