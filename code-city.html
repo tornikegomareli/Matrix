@@ -809,39 +809,6 @@ void main(){
   gl_FragColor = vec4(vec3(0.62, 0.72, 0.86) * mix(streak, bead, uSlow) * vA, 1.0);
 }`;
 
-// ───────────────────────── rain: some drops are falling strands of glyphs ─────────────────────────
-const GRAIN_VS = /* glsl */`
-attribute vec4 aSeed;
-uniform float uRainT;
-varying vec2 vUv; varying float vA; varying float vS;
-void main(){
-  const vec3 B = vec3(110.0, 80.0, 110.0);
-  vec3 p = aSeed.xyz * B; p.y -= mix(9.0, 20.0, aSeed.w) * uRainT;
-  p = mod(p - cameraPosition + B * 0.5, B) - B * 0.5 + cameraPosition;
-  float gs = mix(0.22, 0.44, fract(aSeed.w * 5.7));
-  vec3 toC = cameraPosition - p;
-  vec3 right = normalize(vec3(toC.z, 0.0, -toC.x) + vec3(1e-5, 0.0, 0.0));
-  vec3 wp = p + right * position.x * gs + vec3(0.0, position.y * gs * 8.75, 0.0);
-  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
-  float d = length(toC);
-  vUv = vec2(position.x + 0.5, position.y); vS = aSeed.w * 100.0;
-  vA = smoothstep(0.6, 3.0, d) * (1.0 - smoothstep(38.0, 55.0, d)) * (0.7 + 2.5 / (1.0 + d * d * 0.01)) * (1.0 + uSlow) * uRainK;
-}`;
-const GRAIN_FS = /* glsl */`
-uniform float uRainT;
-varying vec2 vUv; varying float vA; varying float vS;
-void main(){
-  if (hidden()) discard;
-  const float N = 7.0;
-  vec2 uvc = vUv * vec2(1.0, N);
-  float row = floor(uvc.y);                              // row 0 is the leading glyph
-  float chg = floor(uRainT * 5.0 + vS + row * 0.37);
-  float g = glyph(vec2(vUv.x, fract(uvc.y)), floor(h21(vec2(row + chg * 3.7, vS)) * 64.0), dFdx(uvc), dFdy(uvc));
-  float head = step(row, 0.5);
-  vec3 c = mix(vec3(0.15, 1.0, 0.35) * pow(clamp(1.0 - row / N, 0.0, 1.0), 1.6), vec3(0.8, 1.0, 0.85) * 2.2, head);
-  gl_FragColor = vec4(c * g * vA, 1.0);
-}`;
-
 // ───────────────────────── steam from street vents and stacks ─────────────────────────
 const STEAM_VS = /* glsl */`
 attribute vec4 aBase; attribute vec4 aRnd;        // aBase = vent xyz + scale, aRnd = phase + three randoms
@@ -965,7 +932,6 @@ void main(){
 const matRib = mkMat(RIB_VS, RIB_FS, null, ADD);
 
 const matRain = mkMat(RAIN_VS, RAIN_FS, { uRainVel: { value: new THREE.Vector3(5, -44, 2.5) }, uRainT: { value: 0 }, uRainScale: { value: 1 } }, ADD);
-const matGRain = mkMat(GRAIN_VS, GRAIN_FS, { uRainT: matRain.uniforms.uRainT }, ADD);
 const matSteam = mkMat(STEAM_VS, STEAM_FS, null, { transparent: true, depthWrite: false, premultipliedAlpha: true });
 const matCar = mkMat(CAR_VS, CAR_FS, null, { side: THREE.DoubleSide });
 const matCarL = mkMat(CARL_VS, CARL_FS, null, Object.assign({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }, ADD));
@@ -1083,11 +1049,10 @@ function fillRandom(attr, rnd) { const a = attr.array; for (let i = 0; i < a.len
 const ground = addMesh(new THREE.PlaneGeometry(1, 1), matGround);
 const sky = addMesh(new THREE.IcosahedronGeometry(1, 2), matSky, 5);
 
-const N_RAIN = IS_TOUCH ? 7000 : 15000, N_GRAIN = IS_TOUCH ? 300 : 640;
+const N_RAIN = IS_TOUCH ? 7000 : 15000;
 const rainGeo = instGeo(geoStreak, N_RAIN, [['aSeed', 4]]); rainGeo.instanceCount = N_RAIN;
-const grainGeo = instGeo(geoStreak, N_GRAIN, [['aSeed', 4]]); grainGeo.instanceCount = N_GRAIN;
-fillRandom(rainGeo.attributes.aSeed, mulberry32(11)); fillRandom(grainGeo.attributes.aSeed, mulberry32(23));
-const rain = addMesh(rainGeo, matRain, 20), grain = addMesh(grainGeo, matGRain, 21);
+fillRandom(rainGeo.attributes.aSeed, mulberry32(11));
+const rain = addMesh(rainGeo, matRain, 20);
 
 const MAX_STEAM = 2048, STEAM_PER_VENT = 8;
 const steamGeo = instGeo(geoQuad, MAX_STEAM, [['aBase', 4], ['aRnd', 4]]);
@@ -1893,7 +1858,7 @@ function renderScene() {
   matGround.uniforms.uReflOn.value = doRefl ? 1 : 0;
   if (doRefl) {
     U.uMirror.value = -1;
-    ground.visible = rain.visible = grain.visible = steam.visible = farMesh.visible = false;
+    ground.visible = rain.visible = steam.visible = farMesh.visible = false;
     chunkLOD(px, pz, true);
     reflCam.projectionMatrix.copy(camera.projectionMatrix); reflCam.projectionMatrixInverse.copy(camera.projectionMatrixInverse);
     reflCam.matrixWorld.multiplyMatrices(MIRROR, camera.matrixWorld); reflCam.matrixWorldInverse.copy(reflCam.matrixWorld).invert();
@@ -1901,7 +1866,7 @@ function renderScene() {
     U.uMirror.value = 1;
   }
   // 2. main pass: the sky and everything solid
-  ground.visible = steam.visible = true; rain.visible = grain.visible = S.rain && U.uRainK.value > 0.01;
+  ground.visible = steam.visible = true; rain.visible = S.rain && U.uRainK.value > 0.01;
   farMesh.visible = U.uFogFar.value > 1300 && farGeo.instanceCount > 0;
   chunkLOD(px, pz, false);
   camera.layers.set(0);
